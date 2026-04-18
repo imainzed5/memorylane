@@ -1,4 +1,5 @@
-use std::fs;
+use std::fs::{self, File};
+use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -8,7 +9,7 @@ use std::time::Duration;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use chrono::{Local, NaiveDate, Timelike};
-use image::ImageFormat;
+use image::codecs::jpeg::JpegEncoder;
 use rusqlite::{params, Connection};
 use screenshots::Screen;
 use serde::Serialize;
@@ -18,6 +19,8 @@ use tauri::{AppHandle, Emitter, Manager, Runtime, State, WindowEvent};
 
 const DB_FILENAME: &str = "memorylane.db";
 const DEFAULT_INTERVAL_MINUTES: i64 = 2;
+const MIN_INTERVAL_MINUTES: i64 = 1;
+const MAX_INTERVAL_MINUTES: i64 = 240;
 const DEFAULT_RETENTION_DAYS: i64 = 30;
 const DEFAULT_STORAGE_CAP_GB: f64 = 5.0;
 
@@ -80,6 +83,9 @@ struct DayCapturePayload {
     timestamp_label: String,
     image_path: String,
     thumbnail_data_url: String,
+    capture_note: String,
+    width: i64,
+    height: i64,
 }
 
 #[derive(Serialize)]
@@ -270,6 +276,7 @@ fn initialize_database(conn: &Connection) -> Result<(), String> {
             captured_at TEXT NOT NULL,
             image_path TEXT NOT NULL,
             thumbnail_path TEXT NOT NULL,
+            capture_note TEXT NOT NULL DEFAULT '',
             width INTEGER NOT NULL,
             height INTEGER NOT NULL
         );
@@ -282,6 +289,12 @@ fn initialize_database(conn: &Connection) -> Result<(), String> {
     // Support existing databases created before the startup_on_boot column existed.
     let _ = conn.execute(
         "ALTER TABLE settings ADD COLUMN startup_on_boot INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
+
+    // Support existing databases created before capture_note was introduced.
+    let _ = conn.execute(
+        "ALTER TABLE captures ADD COLUMN capture_note TEXT NOT NULL DEFAULT ''",
         [],
     );
 
@@ -713,29 +726,43 @@ fn capture_once(state: &SharedState) -> Result<(), String> {
         .map_err(|error| format!("failed to ensure day capture directory exists: {error}"))?;
 
     let stem = now.format("%Y%m%d_%H%M%S_%3f").to_string();
-    let image_path = day_dir.join(format!("{stem}.png"));
+    let image_path = day_dir.join(format!("{stem}.jpg"));
     let thumbnail_path = day_dir.join(format!("{stem}_thumb.jpg"));
+    let full_image = image::DynamicImage::ImageRgba8(screenshot.clone());
 
-    screenshot
-        .save(&image_path)
-        .map_err(|error| format!("failed to save screenshot: {error}"))?;
+    {
+        let file = File::create(&image_path)
+            .map_err(|error| format!("failed to create screenshot file: {error}"))?;
+        let writer = BufWriter::new(file);
+        let mut encoder = JpegEncoder::new_with_quality(writer, 82);
+        encoder
+            .encode_image(&full_image)
+            .map_err(|error| format!("failed to encode screenshot jpeg: {error}"))?;
+    }
 
-    let thumbnail = image::DynamicImage::ImageRgba8(screenshot.clone()).thumbnail(300, 168);
-    thumbnail
-        .save_with_format(&thumbnail_path, ImageFormat::Jpeg)
-        .map_err(|error| format!("failed to save screenshot thumbnail: {error}"))?;
+    {
+        let thumbnail = full_image.thumbnail(360, 202);
+        let file = File::create(&thumbnail_path)
+            .map_err(|error| format!("failed to create thumbnail file: {error}"))?;
+        let writer = BufWriter::new(file);
+        let mut encoder = JpegEncoder::new_with_quality(writer, 68);
+        encoder
+            .encode_image(&thumbnail)
+            .map_err(|error| format!("failed to encode thumbnail jpeg: {error}"))?;
+    }
 
     with_connection(state, |conn| {
         conn.execute(
             "
-            INSERT INTO captures (day_key, captured_at, image_path, thumbnail_path, width, height)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO captures (day_key, captured_at, image_path, thumbnail_path, capture_note, width, height)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ",
             params![
                 day_key,
                 now.to_rfc3339(),
                 image_path.to_string_lossy().to_string(),
                 thumbnail_path.to_string_lossy().to_string(),
+                "",
                 screenshot.width() as i64,
                 screenshot.height() as i64
             ],
@@ -911,7 +938,7 @@ fn update_settings(
         let mut settings = read_settings(conn)?;
 
         if let Some(interval) = interval_minutes {
-            settings.interval_minutes = interval.clamp(1, 60);
+            settings.interval_minutes = interval.clamp(MIN_INTERVAL_MINUTES, MAX_INTERVAL_MINUTES);
         }
 
         if let Some(retention) = retention_days {
@@ -1042,7 +1069,7 @@ fn get_day_captures(
         let mut stmt = conn
             .prepare(
                 "
-                SELECT id, day_key, captured_at, image_path, thumbnail_path
+                SELECT id, day_key, captured_at, image_path, thumbnail_path, capture_note, width, height
                 FROM captures
                 WHERE day_key = ?
                 ORDER BY captured_at ASC
@@ -1059,6 +1086,9 @@ fn get_day_captures(
                     row.get::<_, String>(2)?,
                     row.get::<_, String>(3)?,
                     row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, i64>(6)?,
+                    row.get::<_, i64>(7)?,
                 ))
             })
             .map_err(|error| format!("failed to run day captures query: {error}"))?;
@@ -1066,10 +1096,19 @@ fn get_day_captures(
         let mut capture_rows = Vec::new();
 
         for row in rows {
-            let (id, row_day_key, captured_at, image_path, thumbnail_path) =
+            let (id, row_day_key, captured_at, image_path, thumbnail_path, capture_note, width, height) =
                 row.map_err(|error| format!("failed to read capture row: {error}"))?;
 
-            capture_rows.push((id, row_day_key, captured_at, image_path, thumbnail_path));
+            capture_rows.push((
+                id,
+                row_day_key,
+                captured_at,
+                image_path,
+                thumbnail_path,
+                capture_note,
+                width,
+                height,
+            ));
         }
 
         Ok(capture_rows)
@@ -1077,7 +1116,7 @@ fn get_day_captures(
 
     let mut captures = Vec::new();
 
-    for (id, row_day_key, captured_at, image_path, thumbnail_path) in rows {
+    for (id, row_day_key, captured_at, image_path, thumbnail_path, capture_note, width, height) in rows {
         let timestamp_label = chrono::DateTime::parse_from_rfc3339(&captured_at)
             .map(|dt| dt.with_timezone(&Local).format("%I:%M %p").to_string())
             .unwrap_or_else(|_| captured_at.clone());
@@ -1089,6 +1128,9 @@ fn get_day_captures(
             timestamp_label,
             image_path,
             thumbnail_data_url: load_image_data_url(&thumbnail_path)?,
+            capture_note,
+            width,
+            height,
         });
     }
 
@@ -1110,6 +1152,34 @@ fn get_capture_image(state: State<SharedState>, capture_id: i64) -> Result<Captu
         id: capture_id,
         image_data_url: load_image_data_url(&image_path)?,
     })
+}
+
+#[tauri::command]
+fn update_capture_note(
+    state: State<SharedState>,
+    app: AppHandle,
+    capture_id: i64,
+    note: String,
+) -> Result<(), String> {
+    with_connection(&state, |conn| {
+        let updated_rows = conn
+            .execute(
+                "UPDATE captures SET capture_note = ? WHERE id = ?",
+                params![note, capture_id],
+            )
+            .map_err(|error| format!("failed to update capture note: {error}"))?;
+
+        if updated_rows == 0 {
+            return Err("capture not found for note update".to_string());
+        }
+
+        Ok(())
+    })?;
+
+    app.emit("captures-updated", ())
+        .map_err(|error| format!("failed to emit capture update event: {error}"))?;
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -1231,6 +1301,7 @@ pub fn run() {
             get_day_summaries,
             get_day_captures,
             get_capture_image,
+            update_capture_note,
             get_capture_health,
             get_storage_stats,
             delete_day,
