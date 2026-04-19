@@ -42,6 +42,7 @@ type SettingsPayload = {
   retentionDays: number;
   storageCapGb: number;
   isPaused: boolean;
+  themeId: string;
 };
 
 type PauseStatePayload = {
@@ -69,6 +70,15 @@ type DeleteDayPayload = {
 };
 
 type NoteSaveState = "idle" | "saving" | "saved" | "error";
+
+type ThemeId = "amber-noir" | "obsidian-jade" | "arctic-slate" | "deep-plum" | "midnight-blue";
+
+type ThemeOption = {
+  id: ThemeId;
+  name: string;
+  mood: string;
+  swatches: [string, string, string, string];
+};
 
 type TopBarProps = {
   hasNextDay: boolean;
@@ -134,19 +144,35 @@ type UtilityRailProps = {
 
 type SettingsModalProps = {
   draftIntervalMinutes: number;
+  draftThemeId: ThemeId;
   draftRetentionDays: number;
   draftStorageCapGb: number;
+  isCustomInterval: boolean;
   intervalMinutes: number;
+  onEnableCustomInterval: () => void;
   onClose: () => void;
+  onDraftThemeChange: (nextValue: ThemeId) => void;
   onDraftIntervalChange: (nextValue: number) => void;
+  onSelectPresetInterval: (nextValue: number) => void;
   onDraftRetentionChange: (nextValue: number) => void;
   onDraftStorageCapChange: (nextValue: number) => void;
   onOpenCapturesFolder: () => void;
+  onResetDraft: () => void;
   onSaveSettings: () => void;
   retentionDays: number;
   storageCapGb: number;
+  themeId: ThemeId;
+  themeOptions: ThemeOption[];
   storagePath: string;
   storageStats: StorageStatsPayload;
+};
+
+type ThemeOnboardingModalProps = {
+  isSaving: boolean;
+  selectedThemeId: ThemeId;
+  themeOptions: ThemeOption[];
+  onConfirm: () => void;
+  onSelectTheme: (themeId: ThemeId) => void;
 };
 
 type TimelineStripProps = {
@@ -178,6 +204,58 @@ const INTERVAL_OPTIONS = [1, 2, 5, 10, 15, 30, 60, 120];
 const TIMELINE_PAGE_LIMIT = 240;
 const TIMELINE_VIRTUAL_WINDOW = 72;
 const TIMELINE_THUMB_WIDTH_PX = 96;
+const LEGACY_THEME_ID: ThemeId = "amber-noir";
+const ONBOARDING_THEME_ID: ThemeId = "obsidian-jade";
+
+const THEME_OPTIONS: ThemeOption[] = [
+  {
+    id: "amber-noir",
+    name: "Amber Noir",
+    mood: "warm, editorial, grounded",
+    swatches: ["#0f0d0b", "#251f1b", "#d58a33", "#2f5d8a"],
+  },
+  {
+    id: "obsidian-jade",
+    name: "Obsidian Jade",
+    mood: "cool, focused, terminal-adjacent",
+    swatches: ["#0b0f0e", "#0e1411", "#3ecf8e", "#1e5f8a"],
+  },
+  {
+    id: "arctic-slate",
+    name: "Arctic Slate",
+    mood: "clean, minimal, professional",
+    swatches: ["#f0f2f5", "#ffffff", "#3a6fd8", "#7c5cbf"],
+  },
+  {
+    id: "deep-plum",
+    name: "Deep Plum",
+    mood: "dramatic, editorial, premium dark",
+    swatches: ["#0d0b12", "#18151f", "#9b6dff", "#d4547a"],
+  },
+  {
+    id: "midnight-blue",
+    name: "Midnight Blue",
+    mood: "sleek, modern, lightly corporate",
+    swatches: ["#090c12", "#101521", "#4d8ef0", "#2a7a8a"],
+  },
+];
+
+function isThemeId(value: string): value is ThemeId {
+  return THEME_OPTIONS.some((option) => option.id === value);
+}
+
+function resolveThemeId(value: string | null | undefined): ThemeId {
+  const normalized = (value ?? "").trim().toLowerCase();
+  if (isThemeId(normalized)) {
+    return normalized;
+  }
+
+  return LEGACY_THEME_ID;
+}
+
+function themeName(themeId: ThemeId): string {
+  return THEME_OPTIONS.find((option) => option.id === themeId)?.name ?? "Theme";
+}
 
 function dayKeyFromDate(date: Date): string {
   const year = date.getFullYear();
@@ -354,20 +432,6 @@ function densityMiniBars(density: number[]): number[] {
   return [values[0] ?? 0.1, values[3] ?? 0.2, values[7] ?? 0.1];
 }
 
-function dayCode(dayKey: string): string {
-  const label = formatDayLabel(dayKey);
-
-  if (label === "Today") {
-    return "TOD";
-  }
-
-  if (label === "Yesterday") {
-    return "YES";
-  }
-
-  return label.slice(0, 3).toUpperCase();
-}
-
 function TopBar({
   hasNextDay,
   hasPreviousDay,
@@ -447,17 +511,23 @@ function TopBar({
 }
 
 function DayRail({ recentDays, selectedDayKey, todayKey, onJumpToToday, onSelectDay }: DayRailProps) {
+  const todayDate = dayDateFromKey(todayKey);
+
   return (
     <aside className="panel day-rail">
       <button className="day-rail-entry today" type="button" onClick={onJumpToToday} title={`Jump to ${formatViewerDate(todayKey)}`}>
-        <span className="day-rail-number">•</span>
-        <span className="day-rail-code">NOW</span>
+        <span className="day-rail-number">{todayDate.getDate()}</span>
+        <span className="day-rail-label">Today</span>
+        <span className="day-rail-meta">Now</span>
       </button>
 
       <div className="day-rail-list">
         {recentDays.map((day) => {
           const isSelected = day.dayKey === selectedDayKey;
           const bars = densityMiniBars(day.density);
+          const dayDate = dayDateFromKey(day.dayKey);
+          const primaryLabel = formatDayLabel(day.dayKey);
+          const secondaryLabel = formatDaySecondary(day.dayKey);
 
           return (
             <button
@@ -467,8 +537,9 @@ function DayRail({ recentDays, selectedDayKey, todayKey, onJumpToToday, onSelect
               title={`${formatViewerDate(day.dayKey)} · ${day.captureCount} captures`}
               onClick={() => onSelectDay(day.dayKey)}
             >
-              <span className="day-rail-number">{dayDateFromKey(day.dayKey).getDate()}</span>
-              <span className="day-rail-code">{dayCode(day.dayKey)}</span>
+              <span className="day-rail-number">{dayDate.getDate()}</span>
+              <span className="day-rail-label">{primaryLabel}</span>
+              <span className="day-rail-meta">{secondaryLabel}</span>
               <span className="day-rail-dots" aria-hidden="true">
                 {bars.map((value, index) => (
                   <span key={`${day.dayKey}-${index}`} style={{ opacity: 0.3 + value * 0.7 }} />
@@ -628,7 +699,7 @@ function UtilityRail({
   return (
     <aside className="panel utility-rail">
       <section className="utility-section">
-        <h3>TODAY</h3>
+        <h3>Today</h3>
         <div className="today-stat-grid">
           <div>
             <strong>{todayCaptureCount}</strong>
@@ -642,7 +713,7 @@ function UtilityRail({
       </section>
 
       <section className="utility-section">
-        <h3>SEARCH CAPTURES</h3>
+        <h3>Search Captures</h3>
         <input
           type="text"
           value={captureSearchQuery}
@@ -653,7 +724,7 @@ function UtilityRail({
 
       <section className="utility-section">
         <div className="section-row">
-          <h3>NOTE THIS CAPTURE</h3>
+          <h3>Note This Capture</h3>
           <span className="note-status">{noteStatusLabel}</span>
         </div>
         <textarea
@@ -673,7 +744,7 @@ function UtilityRail({
       </section>
 
       <section className="utility-section">
-        <h3>RECORDING</h3>
+        <h3>Recording</h3>
         <div className="recording-row">
           <span>{isRecording ? "active" : "paused"} · {intervalMinutes} min cadence</span>
           <button className="secondary compact" type="button" onClick={onTogglePause}>
@@ -687,7 +758,7 @@ function UtilityRail({
       </section>
 
       <section className="utility-section">
-        <h3>STORAGE</h3>
+        <h3>Storage</h3>
         <div className="usage-track" role="presentation">
           <span style={{ width: `${storageStats.usagePercent}%` }} />
         </div>
@@ -697,7 +768,7 @@ function UtilityRail({
       </section>
 
       <section className="utility-section">
-        <h3>DAY ACTIONS</h3>
+        <h3>Day Actions</h3>
         <p className="storage-meta">
           {formatViewerDate(selectedDaySummary.dayKey)} · {selectedDaySummary.captureCount} captures
         </p>
@@ -716,24 +787,35 @@ function UtilityRail({
 
 function SettingsModal({
   draftIntervalMinutes,
+  draftThemeId,
   draftRetentionDays,
   draftStorageCapGb,
+  isCustomInterval,
   intervalMinutes,
+  onEnableCustomInterval,
   onClose,
+  onDraftThemeChange,
   onDraftIntervalChange,
+  onSelectPresetInterval,
   onDraftRetentionChange,
   onDraftStorageCapChange,
   onOpenCapturesFolder,
+  onResetDraft,
   onSaveSettings,
   retentionDays,
   storageCapGb,
+  themeId,
+  themeOptions,
   storagePath,
   storageStats,
 }: SettingsModalProps) {
   const settingsDirty =
     draftIntervalMinutes !== intervalMinutes ||
+    draftThemeId !== themeId ||
     draftRetentionDays !== retentionDays ||
     Number(draftStorageCapGb.toFixed(1)) !== Number(storageCapGb.toFixed(1));
+  const activeThemeOption = themeOptions.find((themeOption) => themeOption.id === draftThemeId);
+  const savedThemeOption = themeOptions.find((themeOption) => themeOption.id === themeId);
 
   return (
     <div className="settings-overlay" role="presentation" onClick={onClose}>
@@ -747,107 +829,267 @@ function SettingsModal({
         <div className="settings-modal-head">
           <div>
             <p className="section-title">Settings</p>
-            <h3 id="settings-modal-title">Capture and storage</h3>
-            <p className="section-meta">{storageStats.captureCount} total captures</p>
+            <h3 id="settings-modal-title">Preferences</h3>
+            <p className="section-meta">
+              {storageStats.captureCount} total captures · Current theme {savedThemeOption?.name ?? "Theme"}
+            </p>
           </div>
-          <button className="secondary compact" type="button" onClick={onClose}>
-            Close
-          </button>
-        </div>
-
-        <div className="stat-stack">
-          <div className="stat-row">
-            <span>Used</span>
-            <strong>{formatStorageValue(storageStats.usedGb)}</strong>
-          </div>
-          <div className="stat-row">
-            <span>Cap</span>
-            <strong>{storageStats.storageCapGb.toFixed(1)} GB</strong>
+          <div className="settings-head-actions">
+            <span className={settingsDirty ? "settings-state-pill dirty" : "settings-state-pill clean"}>
+              {settingsDirty ? "Unsaved changes" : "All changes saved"}
+            </span>
+            <button className="secondary compact" type="button" onClick={onClose}>
+              Close
+            </button>
           </div>
         </div>
 
-        <div className="usage-track" role="presentation">
-          <span style={{ width: `${storageStats.usagePercent}%` }} />
-        </div>
+        <section className="settings-section">
+          <div className="settings-section-head">
+            <h4 className="settings-section-title">
+              <svg className="settings-section-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <path
+                  d="M6.9 3.7c1.8-.7 4-.3 5.5 1.2 2.2 2.2 2.2 5.8 0 8a4.9 4.9 0 0 1-3.6 1.5H6.7a2.4 2.4 0 0 1-2.3-2.9l.3-1.2a2 2 0 0 0-.5-1.9l-.4-.4A2.5 2.5 0 0 1 6.9 3.7Z"
+                  stroke="currentColor"
+                  strokeWidth="1.4"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <circle cx="9.6" cy="7.2" r="0.85" fill="currentColor" />
+                <circle cx="11.9" cy="8.6" r="0.85" fill="currentColor" />
+                <circle cx="8.1" cy="9.3" r="0.85" fill="currentColor" />
+              </svg>
+              Appearance
+            </h4>
+            <span className="theme-pill">{activeThemeOption?.name ?? "Theme"}</span>
+          </div>
+          <p className="field-help">Pick the visual style used across the dashboard surfaces and accents.</p>
+          <div className="theme-grid" role="listbox" aria-label="Theme options">
+            {themeOptions.map((themeOption) => (
+              <button
+                key={themeOption.id}
+                className={themeOption.id === draftThemeId ? "theme-card active" : "theme-card"}
+                type="button"
+                role="option"
+                aria-selected={themeOption.id === draftThemeId}
+                onClick={() => onDraftThemeChange(themeOption.id)}
+              >
+                <span className="theme-card-head">
+                  <strong>{themeOption.name}</strong>
+                  <span>{themeOption.mood}</span>
+                </span>
+                <span className="theme-swatches" aria-hidden="true">
+                  {themeOption.swatches.map((swatch) => (
+                    <span key={`${themeOption.id}-${swatch}`} style={{ backgroundColor: swatch }} />
+                  ))}
+                </span>
+              </button>
+            ))}
+          </div>
+        </section>
 
-        <div className="field-grid">
+        <section className="settings-section">
+          <div className="settings-section-head">
+            <h4 className="settings-section-title">
+              <svg className="settings-section-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <circle cx="10" cy="10" r="6.2" stroke="currentColor" strokeWidth="1.4" />
+                <path d="M10 6.6v3.8l2.7 1.6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              Capture cadence
+            </h4>
+            <span className="section-meta">{draftIntervalMinutes} min</span>
+          </div>
           <label className="field-block" htmlFor="interval-minutes">
-            <span>Capture cadence (minutes)</span>
             <p className="field-help">
-              Presets are quick picks. Use custom minutes below to set any interval between {INTERVAL_MIN_MINUTES} and {INTERVAL_MAX_MINUTES}.
+              Presets are quick picks. Choose Custom to set any interval between {INTERVAL_MIN_MINUTES} and {INTERVAL_MAX_MINUTES}.
             </p>
             <div className="interval-grid">
               {INTERVAL_OPTIONS.map((option) => (
                 <button
                   key={option}
-                  className={option === draftIntervalMinutes ? "interval-btn active" : "interval-btn"}
+                  className={option === draftIntervalMinutes && !isCustomInterval ? "interval-btn active" : "interval-btn"}
                   type="button"
-                  onClick={() => onDraftIntervalChange(option)}
+                  onClick={() => onSelectPresetInterval(option)}
                 >
                   {option} min
                 </button>
               ))}
+              <button
+                className={isCustomInterval ? "interval-btn active" : "interval-btn"}
+                type="button"
+                onClick={onEnableCustomInterval}
+              >
+                Custom
+              </button>
             </div>
-            <span className="field-subtitle">Custom minutes</span>
-            <input
-              id="interval-minutes"
-              type="number"
-              min={INTERVAL_MIN_MINUTES}
-              max={INTERVAL_MAX_MINUTES}
-              step={1}
-              value={draftIntervalMinutes}
-              aria-describedby="interval-minutes-help"
-              onChange={(event) =>
-                onDraftIntervalChange(
-                  clampIntervalMinutes(Math.round(Number(event.currentTarget.value) || INTERVAL_MIN_MINUTES)),
-                )
-              }
-            />
-            <p className="field-help" id="interval-minutes-help">
-              Example: 10 means one screenshot every 10 minutes.
-            </p>
+            {isCustomInterval ? (
+              <>
+                <span className="field-subtitle">Custom minutes</span>
+                <input
+                  id="interval-minutes"
+                  type="number"
+                  min={INTERVAL_MIN_MINUTES}
+                  max={INTERVAL_MAX_MINUTES}
+                  step={1}
+                  value={draftIntervalMinutes}
+                  aria-describedby="interval-minutes-help"
+                  onChange={(event) =>
+                    onDraftIntervalChange(
+                      clampIntervalMinutes(Math.round(Number(event.currentTarget.value) || INTERVAL_MIN_MINUTES)),
+                    )
+                  }
+                />
+                <p className="field-help" id="interval-minutes-help">
+                  Example: 10 means one screenshot every 10 minutes.
+                </p>
+              </>
+            ) : (
+              <p className="field-help" id="interval-minutes-help">
+                Custom input stays hidden until you choose Custom.
+              </p>
+            )}
           </label>
+        </section>
 
-          <label className="field-block" htmlFor="retention-days">
-            <span>Retention days</span>
-            <input
-              id="retention-days"
-              type="number"
-              min={1}
-              max={365}
-              value={draftRetentionDays}
-              onChange={(event) => onDraftRetentionChange(Math.max(1, Number(event.currentTarget.value) || 1))}
-            />
-            <p className="field-help">Oldest day folders are removed after this many days.</p>
-          </label>
+        <section className="settings-section">
+          <div className="settings-section-head">
+            <h4 className="settings-section-title">
+              <svg className="settings-section-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <ellipse cx="10" cy="5.3" rx="5.4" ry="2.3" stroke="currentColor" strokeWidth="1.4" />
+                <path d="M4.6 5.3v7.1c0 1.3 2.4 2.3 5.4 2.3s5.4-1 5.4-2.3V5.3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M15.4 8.9c0 1.3-2.4 2.3-5.4 2.3s-5.4-1-5.4-2.3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              Storage policy
+            </h4>
+          </div>
+          <div className="field-grid field-grid-tight">
+            <label className="field-block" htmlFor="retention-days">
+              <span>Retention days</span>
+              <input
+                id="retention-days"
+                type="number"
+                min={1}
+                max={365}
+                value={draftRetentionDays}
+                onChange={(event) => onDraftRetentionChange(Math.max(1, Number(event.currentTarget.value) || 1))}
+              />
+              <p className="field-help">Oldest day folders are removed after this many days.</p>
+            </label>
 
-          <label className="field-block" htmlFor="storage-cap-gb">
-            <span>Storage cap (GB)</span>
-            <input
-              id="storage-cap-gb"
-              type="number"
-              min={0.5}
-              max={100}
-              step={0.5}
-              value={draftStorageCapGb}
-              onChange={(event) => onDraftStorageCapChange(Math.max(0.5, Number(event.currentTarget.value) || 0.5))}
-            />
-            <p className="field-help">
-              If storage exceeds this cap, MemoryLane deletes the oldest days until usage drops.
-            </p>
-          </label>
-        </div>
+            <label className="field-block" htmlFor="storage-cap-gb">
+              <span>Storage cap (GB)</span>
+              <input
+                id="storage-cap-gb"
+                type="number"
+                min={0.5}
+                max={100}
+                step={0.5}
+                value={draftStorageCapGb}
+                onChange={(event) => onDraftStorageCapChange(Math.max(0.5, Number(event.currentTarget.value) || 0.5))}
+              />
+              <p className="field-help">
+                If storage exceeds this cap, MemoryLane deletes the oldest days until usage drops.
+              </p>
+            </label>
+          </div>
+        </section>
 
-        <div className="utility-actions compact-stack">
+        <section className="settings-section">
+          <div className="settings-section-head">
+            <h4 className="settings-section-title">
+              <svg className="settings-section-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <ellipse cx="10" cy="5.3" rx="5.4" ry="2.3" stroke="currentColor" strokeWidth="1.4" />
+                <path d="M4.6 5.3v7.1c0 1.3 2.4 2.3 5.4 2.3s5.4-1 5.4-2.3V5.3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M15.4 8.9c0 1.3-2.4 2.3-5.4 2.3s-5.4-1-5.4-2.3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              Storage overview
+            </h4>
+            <span className="section-meta">{formatStorageValue(storageStats.usedGb)} used</span>
+          </div>
+          <div className="stat-stack">
+            <div className="stat-row">
+              <span>Used</span>
+              <strong>{formatStorageValue(storageStats.usedGb)}</strong>
+            </div>
+            <div className="stat-row">
+              <span>Cap</span>
+              <strong>{storageStats.storageCapGb.toFixed(1)} GB</strong>
+            </div>
+          </div>
+          <div className="usage-track" role="presentation">
+            <span style={{ width: `${storageStats.usagePercent}%` }} />
+          </div>
+
+          <button className="secondary compact" type="button" onClick={onOpenCapturesFolder}>
+            Open captures folder
+          </button>
+
+          <p className="path-readout">{storagePath}</p>
+        </section>
+
+        <div className="settings-footer">
+          <button className="secondary" type="button" onClick={onResetDraft} disabled={!settingsDirty}>
+            Reset draft
+          </button>
           <button className="secondary" type="button" onClick={onSaveSettings} disabled={!settingsDirty}>
             Save settings
           </button>
-          <button className="secondary" type="button" onClick={onOpenCapturesFolder}>
-            Open captures folder
-          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ThemeOnboardingModal({
+  isSaving,
+  selectedThemeId,
+  themeOptions,
+  onConfirm,
+  onSelectTheme,
+}: ThemeOnboardingModalProps) {
+  return (
+    <div className="settings-overlay" role="presentation">
+      <section
+        className="panel settings-modal onboarding-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="theme-onboarding-title"
+      >
+        <div className="settings-modal-head">
+          <div>
+            <p className="section-title">Theme preference</p>
+            <h3 id="theme-onboarding-title">Choose your default look</h3>
+            <p className="section-meta">You can change this later from Settings.</p>
+          </div>
         </div>
 
-        <p className="path-readout">{storagePath}</p>
+        <div className="theme-grid" role="listbox" aria-label="Onboarding theme options">
+          {themeOptions.map((themeOption) => (
+            <button
+              key={themeOption.id}
+              className={themeOption.id === selectedThemeId ? "theme-card active" : "theme-card"}
+              type="button"
+              role="option"
+              aria-selected={themeOption.id === selectedThemeId}
+              onClick={() => onSelectTheme(themeOption.id)}
+              disabled={isSaving}
+            >
+              <span className="theme-card-head">
+                <strong>{themeOption.name}</strong>
+                <span>{themeOption.mood}</span>
+              </span>
+              <span className="theme-swatches" aria-hidden="true">
+                {themeOption.swatches.map((swatch) => (
+                  <span key={`${themeOption.id}-onboard-${swatch}`} style={{ backgroundColor: swatch }} />
+                ))}
+              </span>
+            </button>
+          ))}
+        </div>
+
+        <button className="secondary" type="button" onClick={onConfirm} disabled={isSaving}>
+          {isSaving ? "Saving theme..." : "Apply theme and continue"}
+        </button>
       </section>
     </div>
   );
@@ -982,10 +1224,16 @@ function App() {
   const [isRecording, setIsRecording] = useState<boolean>(true);
   const [intervalMinutes, setIntervalMinutes] = useState<number>(2);
   const [draftIntervalMinutes, setDraftIntervalMinutes] = useState<number>(2);
+  const [isDraftIntervalCustom, setIsDraftIntervalCustom] = useState<boolean>(false);
   const [retentionDays, setRetentionDays] = useState<number>(30);
   const [storageCapGb, setStorageCapGb] = useState<number>(5);
   const [draftRetentionDays, setDraftRetentionDays] = useState<number>(30);
   const [draftStorageCapGb, setDraftStorageCapGb] = useState<number>(5);
+  const [themeId, setThemeId] = useState<ThemeId>(LEGACY_THEME_ID);
+  const [draftThemeId, setDraftThemeId] = useState<ThemeId>(LEGACY_THEME_ID);
+  const [isThemeOnboardingOpen, setIsThemeOnboardingOpen] = useState<boolean>(false);
+  const [onboardingThemeId, setOnboardingThemeId] = useState<ThemeId>(ONBOARDING_THEME_ID);
+  const [isThemeOnboardingSaving, setIsThemeOnboardingSaving] = useState<boolean>(false);
 
   const [storagePath, setStoragePath] = useState<string>("Resolving managed storage path...");
   const [storageStats, setStorageStats] = useState<StorageStatsPayload>({
@@ -1009,6 +1257,7 @@ function App() {
 
   const selectedDayKeyRef = useRef(selectedDayKey);
   const timelineThumbRefs = useRef<Record<number, HTMLButtonElement | null>>({});
+  const appliedThemeId = isThemeOnboardingOpen ? onboardingThemeId : themeId;
 
   useEffect(() => {
     selectedDayKeyRef.current = selectedDayKey;
@@ -1026,6 +1275,7 @@ function App() {
 
   useEffect(() => {
     setDraftIntervalMinutes(intervalMinutes);
+    setIsDraftIntervalCustom(!INTERVAL_OPTIONS.includes(intervalMinutes));
   }, [intervalMinutes]);
 
   useEffect(() => {
@@ -1035,6 +1285,14 @@ function App() {
   useEffect(() => {
     setDraftStorageCapGb(storageCapGb);
   }, [storageCapGb]);
+
+  useEffect(() => {
+    setDraftThemeId(themeId);
+  }, [themeId]);
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", appliedThemeId);
+  }, [appliedThemeId]);
 
   const navigationDays = useMemo(
     () => (daySummaries.length > 0 ? daySummaries : fallbackDays()),
@@ -1168,6 +1426,12 @@ function App() {
     setRetentionDays(settings.retentionDays);
     setStorageCapGb(settings.storageCapGb);
     setIsRecording(!settings.isPaused);
+    const trimmedTheme = settings.themeId.trim();
+    const resolvedTheme = resolveThemeId(trimmedTheme);
+    const needsThemeOnboarding = trimmedTheme.length === 0;
+    setThemeId(resolvedTheme);
+    setOnboardingThemeId(needsThemeOnboarding ? ONBOARDING_THEME_ID : resolvedTheme);
+    setIsThemeOnboardingOpen(needsThemeOnboarding);
     setStorageStats(stats);
     setCaptureHealth(health);
   }, []);
@@ -1521,6 +1785,15 @@ function App() {
     await initializeDayCaptures(today, total);
   }, [daySummaries, initializeDayCaptures]);
 
+  const toggleFullscreen = useCallback(async () => {
+    try {
+      const nextFullscreenState = await invoke<boolean>("toggle_fullscreen");
+      setActionMessage(nextFullscreenState ? "Entered fullscreen mode." : "Exited fullscreen mode.");
+    } catch {
+      setActionMessage("Unable to toggle fullscreen mode.");
+    }
+  }, []);
+
   const togglePauseResume = useCallback(async () => {
     const nextPaused = isRecording;
 
@@ -1539,25 +1812,62 @@ function App() {
     const intervalTarget = clampIntervalMinutes(Math.round(draftIntervalMinutes || INTERVAL_MIN_MINUTES));
     const retentionTarget = Math.max(1, Math.min(365, Math.round(draftRetentionDays || 1)));
     const capTarget = Math.max(0.5, Math.min(100, Number((draftStorageCapGb || 0.5).toFixed(1))));
+    const themeTarget = draftThemeId;
 
     try {
       const updated = await invoke<SettingsPayload>("update_settings", {
         intervalMinutes: intervalTarget,
         retentionDays: retentionTarget,
         storageCapGb: capTarget,
+        themeId: themeTarget,
       });
 
       setIntervalMinutes(updated.intervalMinutes);
       setRetentionDays(updated.retentionDays);
       setStorageCapGb(updated.storageCapGb);
+      setThemeId(resolveThemeId(updated.themeId));
       await refreshAll(selectedDayKeyRef.current);
-      setActionMessage(`Settings saved. Capturing every ${updated.intervalMinutes} minute(s).`);
+      setActionMessage(
+        `Settings saved. Capturing every ${updated.intervalMinutes} minute(s) with ${themeName(resolveThemeId(updated.themeId))}.`,
+      );
       return true;
     } catch {
       setActionMessage("Unable to save settings.");
       return false;
     }
-  }, [draftIntervalMinutes, draftRetentionDays, draftStorageCapGb, refreshAll]);
+  }, [draftIntervalMinutes, draftRetentionDays, draftStorageCapGb, draftThemeId, refreshAll]);
+
+  const resetSettingsDraft = useCallback(() => {
+    setDraftIntervalMinutes(intervalMinutes);
+    setIsDraftIntervalCustom(!INTERVAL_OPTIONS.includes(intervalMinutes));
+    setDraftThemeId(themeId);
+    setDraftRetentionDays(retentionDays);
+    setDraftStorageCapGb(storageCapGb);
+  }, [intervalMinutes, retentionDays, storageCapGb, themeId]);
+
+  const completeThemeOnboarding = useCallback(async () => {
+    if (isThemeOnboardingSaving) {
+      return;
+    }
+
+    setIsThemeOnboardingSaving(true);
+
+    try {
+      const updated = await invoke<SettingsPayload>("update_settings", {
+        themeId: onboardingThemeId,
+      });
+
+      const nextThemeId = resolveThemeId(updated.themeId);
+      setThemeId(nextThemeId);
+      setDraftThemeId(nextThemeId);
+      setIsThemeOnboardingOpen(false);
+      setActionMessage(`Theme set to ${themeName(nextThemeId)}.`);
+    } catch {
+      setActionMessage("Unable to save selected theme.");
+    } finally {
+      setIsThemeOnboardingSaving(false);
+    }
+  }, [isThemeOnboardingSaving, onboardingThemeId]);
 
   const saveSettingsFromModal = useCallback(async () => {
     const didSave = await persistSettings();
@@ -1686,6 +1996,10 @@ function App() {
         return;
       }
 
+      if (isThemeOnboardingOpen) {
+        return;
+      }
+
       if (isSettingsOpen) {
         if (event.key === "Escape") {
           event.preventDefault();
@@ -1751,6 +2065,10 @@ function App() {
           event.preventDefault();
           void jumpToToday();
           return;
+        case "F11":
+          event.preventDefault();
+          void toggleFullscreen();
+          return;
         case ",":
           event.preventDefault();
           void loadOlderPage();
@@ -1778,7 +2096,9 @@ function App() {
     openCapturesFolder,
     shiftCapture,
     shiftDay,
+    isThemeOnboardingOpen,
     isSettingsOpen,
+    toggleFullscreen,
     togglePauseResume,
     triggerCaptureNow,
   ]);
@@ -1791,7 +2111,7 @@ function App() {
   const noteDirty = selectedCapture ? noteDraft !== selectedCapture.captureNote : false;
 
   return (
-    <div className="memorylane-root">
+    <div className="memorylane-root" data-theme={appliedThemeId}>
       <div className="app-shell">
         <TopBar
           hasNextDay={hasNextDay}
@@ -1886,19 +2206,43 @@ function App() {
       {isSettingsOpen ? (
         <SettingsModal
           draftIntervalMinutes={draftIntervalMinutes}
+          draftThemeId={draftThemeId}
           draftRetentionDays={draftRetentionDays}
           draftStorageCapGb={draftStorageCapGb}
+          isCustomInterval={isDraftIntervalCustom}
           intervalMinutes={intervalMinutes}
+          onEnableCustomInterval={() => setIsDraftIntervalCustom(true)}
           onClose={() => setIsSettingsOpen(false)}
-          onDraftIntervalChange={setDraftIntervalMinutes}
+          onDraftThemeChange={setDraftThemeId}
+          onDraftIntervalChange={(nextValue) => {
+            setIsDraftIntervalCustom(true);
+            setDraftIntervalMinutes(nextValue);
+          }}
+          onSelectPresetInterval={(nextValue) => {
+            setIsDraftIntervalCustom(false);
+            setDraftIntervalMinutes(nextValue);
+          }}
           onDraftRetentionChange={setDraftRetentionDays}
           onDraftStorageCapChange={setDraftStorageCapGb}
           onOpenCapturesFolder={() => void openCapturesFolder()}
+          onResetDraft={resetSettingsDraft}
           onSaveSettings={() => void saveSettingsFromModal()}
           retentionDays={retentionDays}
           storageCapGb={storageCapGb}
+          themeId={themeId}
+          themeOptions={THEME_OPTIONS}
           storagePath={storagePath}
           storageStats={storageStats}
+        />
+      ) : null}
+
+      {isThemeOnboardingOpen ? (
+        <ThemeOnboardingModal
+          isSaving={isThemeOnboardingSaving}
+          selectedThemeId={onboardingThemeId}
+          themeOptions={THEME_OPTIONS.filter((option) => option.id !== LEGACY_THEME_ID)}
+          onSelectTheme={setOnboardingThemeId}
+          onConfirm={() => void completeThemeOnboarding()}
         />
       ) : null}
     </div>

@@ -16,6 +16,7 @@ use serde::Serialize;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State, WindowEvent};
+use tauri_plugin_notification::NotificationExt;
 
 const DB_FILENAME: &str = "memorylane.db";
 const DEFAULT_INTERVAL_MINUTES: i64 = 2;
@@ -23,6 +24,15 @@ const MIN_INTERVAL_MINUTES: i64 = 1;
 const MAX_INTERVAL_MINUTES: i64 = 240;
 const DEFAULT_RETENTION_DAYS: i64 = 30;
 const DEFAULT_STORAGE_CAP_GB: f64 = 5.0;
+const LEGACY_THEME_ID: &str = "amber-noir";
+
+const VALID_THEME_IDS: [&str; 5] = [
+    LEGACY_THEME_ID,
+    "obsidian-jade",
+    "arctic-slate",
+    "deep-plum",
+    "midnight-blue",
+];
 
 fn startup_on_boot_supported() -> bool {
     cfg!(all(feature = "startup-on-boot", target_os = "windows"))
@@ -45,6 +55,7 @@ struct Settings {
     storage_cap_gb: f64,
     is_paused: bool,
     startup_on_boot: bool,
+    theme_id: String,
 }
 
 #[derive(Serialize)]
@@ -56,6 +67,7 @@ struct SettingsPayload {
     is_paused: bool,
     startup_on_boot: bool,
     startup_on_boot_supported: bool,
+    theme_id: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -267,7 +279,8 @@ fn initialize_database(conn: &Connection) -> Result<(), String> {
             retention_days INTEGER NOT NULL,
             storage_cap_gb REAL NOT NULL,
             is_paused INTEGER NOT NULL,
-            startup_on_boot INTEGER NOT NULL DEFAULT 0
+            startup_on_boot INTEGER NOT NULL DEFAULT 0,
+            theme_id TEXT NOT NULL DEFAULT ''
         );
 
         CREATE TABLE IF NOT EXISTS captures (
@@ -286,9 +299,19 @@ fn initialize_database(conn: &Connection) -> Result<(), String> {
     )
     .map_err(|error| format!("failed to initialize database schema: {error}"))?;
 
+    let existing_settings_count = conn
+        .query_row("SELECT COUNT(*) FROM settings", [], |row| row.get::<_, i64>(0))
+        .unwrap_or(0);
+
     // Support existing databases created before the startup_on_boot column existed.
     let _ = conn.execute(
         "ALTER TABLE settings ADD COLUMN startup_on_boot INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
+
+    // Support existing databases created before theme persistence was introduced.
+    let _ = conn.execute(
+        "ALTER TABLE settings ADD COLUMN theme_id TEXT NOT NULL DEFAULT ''",
         [],
     );
 
@@ -300,8 +323,8 @@ fn initialize_database(conn: &Connection) -> Result<(), String> {
 
     conn.execute(
         "
-        INSERT INTO settings (id, interval_minutes, retention_days, storage_cap_gb, is_paused, startup_on_boot)
-        VALUES (1, ?, ?, ?, 0, 0)
+        INSERT INTO settings (id, interval_minutes, retention_days, storage_cap_gb, is_paused, startup_on_boot, theme_id)
+        VALUES (1, ?, ?, ?, 0, 0, '')
         ON CONFLICT(id) DO NOTHING
         ",
         params![
@@ -312,14 +335,40 @@ fn initialize_database(conn: &Connection) -> Result<(), String> {
     )
     .map_err(|error| format!("failed to seed default settings: {error}"))?;
 
+    if existing_settings_count > 0 {
+        conn.execute(
+            "
+            UPDATE settings
+            SET theme_id = ?
+            WHERE id = 1
+              AND (theme_id IS NULL OR trim(theme_id) = '')
+            ",
+            params![LEGACY_THEME_ID],
+        )
+        .map_err(|error| format!("failed to migrate legacy theme value: {error}"))?;
+    }
+
     Ok(())
+}
+
+fn normalize_theme_id(raw_theme_id: &str) -> Result<String, String> {
+    let normalized = raw_theme_id.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return Err("themeId cannot be empty".to_string());
+    }
+
+    if VALID_THEME_IDS.contains(&normalized.as_str()) {
+        Ok(normalized)
+    } else {
+        Err(format!("unsupported themeId: {normalized}"))
+    }
 }
 
 fn read_settings(conn: &Connection) -> Result<Settings, String> {
     let mut stmt = conn
         .prepare(
             "
-            SELECT interval_minutes, retention_days, storage_cap_gb, is_paused, startup_on_boot
+            SELECT interval_minutes, retention_days, storage_cap_gb, is_paused, startup_on_boot, theme_id
             FROM settings
             WHERE id = 1
             ",
@@ -334,6 +383,7 @@ fn read_settings(conn: &Connection) -> Result<Settings, String> {
                 storage_cap_gb: row.get(2)?,
                 is_paused: row.get::<_, i64>(3)? != 0,
                 startup_on_boot: row.get::<_, i64>(4)? != 0,
+                theme_id: row.get(5)?,
             })
         })
         .map_err(|error| format!("failed to read settings: {error}"))?;
@@ -345,7 +395,7 @@ fn write_settings(conn: &Connection, settings: &Settings) -> Result<(), String> 
     conn.execute(
         "
         UPDATE settings
-        SET interval_minutes = ?, retention_days = ?, storage_cap_gb = ?, is_paused = ?, startup_on_boot = ?
+        SET interval_minutes = ?, retention_days = ?, storage_cap_gb = ?, is_paused = ?, startup_on_boot = ?, theme_id = ?
         WHERE id = 1
         ",
         params![
@@ -353,7 +403,8 @@ fn write_settings(conn: &Connection, settings: &Settings) -> Result<(), String> 
             settings.retention_days,
             settings.storage_cap_gb,
             if settings.is_paused { 1 } else { 0 },
-            if settings.startup_on_boot { 1 } else { 0 }
+            if settings.startup_on_boot { 1 } else { 0 },
+            settings.theme_id
         ],
     )
     .map_err(|error| format!("failed to write settings: {error}"))?;
@@ -377,6 +428,7 @@ fn settings_to_payload(settings: Settings) -> SettingsPayload {
         is_paused: settings.is_paused,
         startup_on_boot: settings.startup_on_boot,
         startup_on_boot_supported: startup_on_boot_supported(),
+        theme_id: settings.theme_id,
     }
 }
 
@@ -785,6 +837,15 @@ fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
+fn show_minimized_to_tray_notification<R: Runtime>(app: &AppHandle<R>) {
+    let _ = app
+        .notification()
+        .builder()
+        .title("MemoryLane")
+        .body("Minimized to tray. Click the tray icon to reopen.")
+        .show();
+}
+
 fn set_pause_internal(state: &SharedState, is_paused: bool) -> Result<(), String> {
     with_connection(state, |conn| {
         let mut settings = read_settings(conn)?;
@@ -828,6 +889,19 @@ fn start_capture_worker(app: AppHandle, state: SharedState) {
 }
 
 fn setup_tray(app: &AppHandle) -> Result<(), String> {
+    let tray_icon_rgba = image::load_from_memory_with_format(
+        include_bytes!("../icons/icon.png"),
+        image::ImageFormat::Png,
+    )
+    .map_err(|error| format!("failed to decode tray logo png: {error}"))?
+    .to_rgba8();
+    let (tray_icon_width, tray_icon_height) = tray_icon_rgba.dimensions();
+    let tray_icon = tauri::image::Image::new_owned(
+        tray_icon_rgba.into_raw(),
+        tray_icon_width,
+        tray_icon_height,
+    );
+
     let open_dashboard = MenuItemBuilder::with_id("open_dashboard", "Open Dashboard")
         .build(app)
         .map_err(|error| format!("failed to build open dashboard menu item: {error}"))?;
@@ -856,6 +930,7 @@ fn setup_tray(app: &AppHandle) -> Result<(), String> {
         .map_err(|error| format!("failed to build tray menu: {error}"))?;
 
     TrayIconBuilder::new()
+        .icon(tray_icon)
         .menu(&menu)
         .tooltip("MemoryLane")
         .on_menu_event(|app, event| match event.id().as_ref() {
@@ -933,6 +1008,7 @@ fn update_settings(
     interval_minutes: Option<i64>,
     retention_days: Option<i64>,
     storage_cap_gb: Option<f64>,
+    theme_id: Option<String>,
 ) -> Result<SettingsPayload, String> {
     let updated = with_connection(&state, |conn| {
         let mut settings = read_settings(conn)?;
@@ -947,6 +1023,10 @@ fn update_settings(
 
         if let Some(cap) = storage_cap_gb {
             settings.storage_cap_gb = cap.clamp(0.5, 100.0);
+        }
+
+        if let Some(theme) = theme_id {
+            settings.theme_id = normalize_theme_id(&theme)?;
         }
 
         write_settings(conn, &settings)?;
@@ -985,6 +1065,34 @@ fn set_pause_state(state: State<SharedState>, app: AppHandle, is_paused: bool) -
     app.emit("pause-state-changed", PauseStatePayload { is_paused })
         .map_err(|error| format!("failed to emit pause state event: {error}"))?;
     Ok(PauseStatePayload { is_paused })
+}
+
+#[tauri::command]
+fn get_fullscreen_state(app: AppHandle) -> Result<bool, String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main window not found".to_string())?;
+
+    window
+        .is_fullscreen()
+        .map_err(|error| format!("failed to read fullscreen state: {error}"))
+}
+
+#[tauri::command]
+fn toggle_fullscreen(app: AppHandle) -> Result<bool, String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main window not found".to_string())?;
+
+    let next_fullscreen_state = !window
+        .is_fullscreen()
+        .map_err(|error| format!("failed to read fullscreen state: {error}"))?;
+
+    window
+        .set_fullscreen(next_fullscreen_state)
+        .map_err(|error| format!("failed to set fullscreen state: {error}"))?;
+
+    Ok(next_fullscreen_state)
 }
 
 #[tauri::command]
@@ -1235,6 +1343,7 @@ fn delete_capture(state: State<SharedState>, capture_id: i64, app: AppHandle) ->
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let app_handle = app.handle().clone();
             let app_data_dir = resolve_app_data_dir(&app_handle)?;
@@ -1275,12 +1384,24 @@ pub fn run() {
             if let Some(window) = app_handle.get_webview_window("main") {
                 let allow_exit = state.allow_exit.clone();
                 let window_handle = window.clone();
+                let app_for_notification = app_handle.clone();
                 window.on_window_event(move |event| {
                     if let WindowEvent::CloseRequested { api, .. } = event {
                         if !allow_exit.load(Ordering::Relaxed) {
                             api.prevent_close();
                             let _ = window_handle.hide();
                         }
+
+                        return;
+                    }
+
+                    if window_handle.is_minimized().unwrap_or(false) {
+                        // Keep the app running in the tray when users minimize the window.
+                        let _ = window_handle.hide();
+                        let _ = window_handle.unminimize();
+                        show_minimized_to_tray_notification(&app_for_notification);
+
+                        return;
                     }
                 });
             }
@@ -1297,6 +1418,8 @@ pub fn run() {
             set_startup_on_boot,
             get_pause_state,
             set_pause_state,
+            get_fullscreen_state,
+            toggle_fullscreen,
             capture_now,
             get_day_summaries,
             get_day_captures,
@@ -1479,6 +1602,51 @@ mod tests {
 
             Ok(ids)
         })
+    }
+
+    #[test]
+    fn fresh_install_uses_empty_theme_for_onboarding() {
+        let connection = Connection::open_in_memory().expect("failed to open in-memory sqlite db");
+        initialize_database(&connection).expect("failed to initialize fresh db schema");
+
+        let settings = read_settings(&connection).expect("failed to read settings for fresh install");
+        assert_eq!(settings.theme_id, "");
+    }
+
+    #[test]
+    fn legacy_install_gets_seeded_with_amber_theme() {
+        let connection = Connection::open_in_memory().expect("failed to open in-memory sqlite db");
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE settings (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    interval_minutes INTEGER NOT NULL,
+                    retention_days INTEGER NOT NULL,
+                    storage_cap_gb REAL NOT NULL,
+                    is_paused INTEGER NOT NULL
+                );
+
+                CREATE TABLE captures (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    day_key TEXT NOT NULL,
+                    captured_at TEXT NOT NULL,
+                    image_path TEXT NOT NULL,
+                    thumbnail_path TEXT NOT NULL,
+                    width INTEGER NOT NULL,
+                    height INTEGER NOT NULL
+                );
+
+                INSERT INTO settings (id, interval_minutes, retention_days, storage_cap_gb, is_paused)
+                VALUES (1, 2, 30, 5.0, 0);
+                ",
+            )
+            .expect("failed to seed legacy schema");
+
+        initialize_database(&connection).expect("failed to migrate legacy schema");
+
+        let settings = read_settings(&connection).expect("failed to read migrated settings");
+        assert_eq!(settings.theme_id, LEGACY_THEME_ID);
     }
 
     #[test]
