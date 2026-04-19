@@ -33,6 +33,8 @@ MemoryLane is a Windows-only, local-first screenshot journal for desktop work. I
 7. Build Windows installers: `npm run build:desktop`
 
 The desktop bundle is written to `src-tauri/target/release/bundle`.
+The landing page is available separately at `public/landing.html`; the packaged exe opens the app shell from `index.html`.
+For the optional OCR installer component in NSIS builds, place `tesseract-installer.exe` in `src-tauri/resources/tesseract/` before packaging.
 
 ## Keyboard Shortcuts
 

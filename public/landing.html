@@ -1,0 +1,2691 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="description"
+      content="MemoryLane is a Windows desktop app that quietly captures screenshots on a schedule and lets you review your day through a timeline journal."
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
+    <link rel="icon" type="image/jpeg" href="/memorylane_logo.jpg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Playfair+Display:ital,wght@0,600;0,700;1,600;1,700&display=swap"
+      rel="stylesheet"
+    />
+    <title>MemoryLane | A passive diary of your screen.</title>
+    <style>
+      :root {
+        --root-bg: #0f0d0b;
+        --shell-surface: rgba(22, 18, 15, 0.94);
+        --panel-surface: rgba(37, 31, 27, 0.94);
+        --card-surface: rgba(45, 37, 32, 0.72);
+        --text-primary: #e9dfd1;
+        --text-muted: #a89c8d;
+        --text-soft: #7f7569;
+        --border-subtle: rgba(211, 177, 132, 0.18);
+        --border-visible: rgba(211, 177, 132, 0.34);
+        --accent-primary: #d58a33;
+        --accent-bright: #ef9f44;
+        --accent-blue: #2f5d8a;
+        --accent-red: #cf5a44;
+        --accent-green: #77a95f;
+        --shadow-heavy: 0 30px 80px rgba(0, 0, 0, 0.44);
+        --shadow-soft: 0 16px 36px rgba(0, 0, 0, 0.24);
+        --font-display: "Playfair Display", Georgia, serif;
+        --font-body: "DM Sans", "Segoe UI", sans-serif;
+        --page-width: min(1320px, calc(100% - 2.5rem));
+        --button-ink: #150f0a;
+        --window-bar-bg: rgba(26, 21, 18, 0.94);
+        --window-body-bg: rgba(18, 15, 13, 0.94);
+        --rail-bg: rgba(19, 16, 13, 0.9);
+        --day-bg: rgba(34, 28, 24, 0.74);
+        --day-active-bg: rgba(52, 43, 38, 0.8);
+        --inner-panel-bg: rgba(22, 18, 15, 0.94);
+        --inner-panel-border: rgba(211, 177, 132, 0.12);
+        --terminal-bg: rgba(14, 12, 10, 0.88);
+        --terminal-border: rgba(211, 177, 132, 0.1);
+        --progress-track: rgba(127, 117, 105, 0.16);
+        --soft-chip-bg: rgba(47, 93, 138, 0.14);
+        --soft-chip-border: rgba(47, 93, 138, 0.24);
+        --soft-chip-text: #7ca9d4;
+        --status-chip-bg: rgba(119, 169, 95, 0.12);
+        --status-chip-border: rgba(119, 169, 95, 0.22);
+        --status-chip-text: var(--accent-green);
+        --thumb-top: rgba(52, 43, 38, 0.8);
+        --thumb-bottom: rgba(24, 20, 17, 0.94);
+        --thumb-overlay-top: rgba(233, 223, 209, 0.08);
+        --thumb-overlay-warm: rgba(239, 159, 68, 0.14);
+        --thumb-overlay-bottom: rgba(213, 138, 51, 0.2);
+        --thumb-overlay-alt: rgba(47, 93, 138, 0.18);
+      }
+
+      body[data-theme="amber-noir"] {
+        color-scheme: dark;
+      }
+
+      body[data-theme="obsidian-jade"] {
+        color-scheme: dark;
+        --root-bg: #0b0f0e;
+        --shell-surface: rgba(14, 20, 17, 0.94);
+        --panel-surface: rgba(20, 29, 25, 0.94);
+        --card-surface: rgba(29, 40, 35, 0.72);
+        --text-primary: #dcf5ea;
+        --text-muted: #a0bdb0;
+        --text-soft: #6f897d;
+        --border-subtle: rgba(62, 207, 142, 0.16);
+        --border-visible: rgba(62, 207, 142, 0.34);
+        --accent-primary: #3ecf8e;
+        --accent-bright: #63dfaa;
+        --accent-blue: #1e5f8a;
+        --accent-red: #cb5f58;
+        --accent-green: #7ed79f;
+        --button-ink: #07110c;
+        --window-bar-bg: rgba(12, 17, 15, 0.96);
+        --window-body-bg: rgba(10, 15, 13, 0.96);
+        --rail-bg: rgba(11, 17, 14, 0.92);
+        --day-bg: rgba(25, 36, 31, 0.78);
+        --day-active-bg: rgba(34, 48, 41, 0.82);
+        --inner-panel-bg: rgba(15, 22, 19, 0.96);
+        --inner-panel-border: rgba(62, 207, 142, 0.12);
+        --terminal-bg: rgba(8, 12, 10, 0.9);
+        --terminal-border: rgba(62, 207, 142, 0.1);
+        --progress-track: rgba(111, 137, 125, 0.16);
+        --soft-chip-bg: rgba(30, 95, 138, 0.18);
+        --soft-chip-border: rgba(30, 95, 138, 0.28);
+        --soft-chip-text: #93bfd9;
+        --status-chip-bg: rgba(62, 207, 142, 0.14);
+        --status-chip-border: rgba(62, 207, 142, 0.22);
+        --status-chip-text: #80e4b5;
+        --thumb-top: rgba(29, 40, 35, 0.82);
+        --thumb-bottom: rgba(10, 15, 13, 0.96);
+        --thumb-overlay-top: rgba(220, 245, 234, 0.1);
+        --thumb-overlay-warm: rgba(62, 207, 142, 0.18);
+        --thumb-overlay-bottom: rgba(62, 207, 142, 0.22);
+        --thumb-overlay-alt: rgba(30, 95, 138, 0.2);
+      }
+
+      body[data-theme="arctic-slate"] {
+        color-scheme: light;
+        --root-bg: #eef2f7;
+        --shell-surface: rgba(255, 255, 255, 0.94);
+        --panel-surface: rgba(244, 247, 251, 0.94);
+        --card-surface: rgba(255, 255, 255, 0.84);
+        --text-primary: #182330;
+        --text-muted: #526171;
+        --text-soft: #7a8796;
+        --border-subtle: rgba(58, 111, 216, 0.14);
+        --border-visible: rgba(58, 111, 216, 0.3);
+        --accent-primary: #3a6fd8;
+        --accent-bright: #5b87e3;
+        --accent-blue: #7c5cbf;
+        --accent-red: #c55b48;
+        --accent-green: #4f8a61;
+        --shadow-heavy: 0 28px 70px rgba(20, 34, 55, 0.12);
+        --shadow-soft: 0 16px 30px rgba(20, 34, 55, 0.08);
+        --button-ink: #f8fbff;
+        --window-bar-bg: rgba(236, 241, 247, 0.96);
+        --window-body-bg: rgba(248, 250, 253, 0.98);
+        --rail-bg: rgba(241, 245, 250, 0.94);
+        --day-bg: rgba(232, 238, 246, 0.92);
+        --day-active-bg: rgba(217, 228, 244, 0.98);
+        --inner-panel-bg: rgba(255, 255, 255, 0.98);
+        --inner-panel-border: rgba(58, 111, 216, 0.12);
+        --terminal-bg: rgba(242, 246, 251, 0.96);
+        --terminal-border: rgba(58, 111, 216, 0.12);
+        --progress-track: rgba(122, 135, 150, 0.18);
+        --soft-chip-bg: rgba(124, 92, 191, 0.12);
+        --soft-chip-border: rgba(124, 92, 191, 0.22);
+        --soft-chip-text: #6b50ac;
+        --status-chip-bg: rgba(79, 138, 97, 0.12);
+        --status-chip-border: rgba(79, 138, 97, 0.22);
+        --status-chip-text: #467654;
+        --thumb-top: rgba(221, 231, 244, 0.95);
+        --thumb-bottom: rgba(244, 247, 251, 0.98);
+        --thumb-overlay-top: rgba(24, 35, 48, 0.08);
+        --thumb-overlay-warm: rgba(58, 111, 216, 0.14);
+        --thumb-overlay-bottom: rgba(58, 111, 216, 0.18);
+        --thumb-overlay-alt: rgba(124, 92, 191, 0.18);
+      }
+
+      body[data-theme="deep-plum"] {
+        color-scheme: dark;
+        --root-bg: #0d0b12;
+        --shell-surface: rgba(24, 21, 31, 0.94);
+        --panel-surface: rgba(33, 28, 44, 0.94);
+        --card-surface: rgba(41, 34, 54, 0.74);
+        --text-primary: #f0e7fb;
+        --text-muted: #b2a6c7;
+        --text-soft: #857996;
+        --border-subtle: rgba(155, 109, 255, 0.18);
+        --border-visible: rgba(155, 109, 255, 0.34);
+        --accent-primary: #9b6dff;
+        --accent-bright: #b490ff;
+        --accent-blue: #d4547a;
+        --accent-red: #d4547a;
+        --accent-green: #7ab97e;
+        --button-ink: #140e23;
+        --window-bar-bg: rgba(21, 18, 29, 0.96);
+        --window-body-bg: rgba(15, 12, 22, 0.96);
+        --rail-bg: rgba(20, 17, 28, 0.92);
+        --day-bg: rgba(36, 30, 49, 0.78);
+        --day-active-bg: rgba(50, 41, 68, 0.84);
+        --inner-panel-bg: rgba(23, 19, 33, 0.96);
+        --inner-panel-border: rgba(155, 109, 255, 0.12);
+        --terminal-bg: rgba(12, 10, 18, 0.9);
+        --terminal-border: rgba(155, 109, 255, 0.1);
+        --progress-track: rgba(133, 121, 150, 0.16);
+        --soft-chip-bg: rgba(212, 84, 122, 0.14);
+        --soft-chip-border: rgba(212, 84, 122, 0.24);
+        --soft-chip-text: #f09bb6;
+        --status-chip-bg: rgba(122, 185, 126, 0.14);
+        --status-chip-border: rgba(122, 185, 126, 0.22);
+        --status-chip-text: #8ed992;
+        --thumb-top: rgba(51, 42, 69, 0.82);
+        --thumb-bottom: rgba(18, 14, 26, 0.96);
+        --thumb-overlay-top: rgba(240, 231, 251, 0.08);
+        --thumb-overlay-warm: rgba(155, 109, 255, 0.14);
+        --thumb-overlay-bottom: rgba(155, 109, 255, 0.2);
+        --thumb-overlay-alt: rgba(212, 84, 122, 0.18);
+      }
+
+      body[data-theme="midnight-blue"] {
+        color-scheme: dark;
+        --root-bg: #090c12;
+        --shell-surface: rgba(16, 21, 33, 0.94);
+        --panel-surface: rgba(21, 28, 43, 0.94);
+        --card-surface: rgba(31, 39, 58, 0.76);
+        --text-primary: #e7eefc;
+        --text-muted: #9ba9c0;
+        --text-soft: #6f7d94;
+        --border-subtle: rgba(77, 142, 240, 0.18);
+        --border-visible: rgba(77, 142, 240, 0.34);
+        --accent-primary: #4d8ef0;
+        --accent-bright: #78abff;
+        --accent-blue: #2a7a8a;
+        --accent-red: #cf5a44;
+        --accent-green: #77a95f;
+        --button-ink: #07101f;
+        --window-bar-bg: rgba(13, 18, 29, 0.96);
+        --window-body-bg: rgba(10, 14, 22, 0.96);
+        --rail-bg: rgba(12, 17, 27, 0.92);
+        --day-bg: rgba(25, 33, 48, 0.8);
+        --day-active-bg: rgba(35, 45, 65, 0.86);
+        --inner-panel-bg: rgba(16, 21, 33, 0.96);
+        --inner-panel-border: rgba(77, 142, 240, 0.12);
+        --terminal-bg: rgba(8, 12, 19, 0.9);
+        --terminal-border: rgba(77, 142, 240, 0.1);
+        --progress-track: rgba(111, 125, 148, 0.16);
+        --soft-chip-bg: rgba(42, 122, 138, 0.16);
+        --soft-chip-border: rgba(42, 122, 138, 0.24);
+        --soft-chip-text: #8bc7d3;
+        --status-chip-bg: rgba(119, 169, 95, 0.14);
+        --status-chip-border: rgba(119, 169, 95, 0.22);
+        --status-chip-text: #8fcb72;
+        --thumb-top: rgba(40, 51, 74, 0.84);
+        --thumb-bottom: rgba(11, 15, 24, 0.96);
+        --thumb-overlay-top: rgba(231, 238, 252, 0.08);
+        --thumb-overlay-warm: rgba(77, 142, 240, 0.14);
+        --thumb-overlay-bottom: rgba(77, 142, 240, 0.22);
+        --thumb-overlay-alt: rgba(42, 122, 138, 0.2);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--root-bg);
+        color: var(--text-primary);
+        font-family: var(--font-body);
+        text-rendering: optimizeLegibility;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        z-index: -1;
+        pointer-events: none;
+        opacity: 0.1;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180' viewBox='0 0 180 180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.92' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='0.75'/%3E%3C/svg%3E");
+        background-size: 180px 180px;
+        mix-blend-mode: screen;
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      button,
+      input,
+      textarea {
+        font: inherit;
+      }
+
+      svg {
+        display: block;
+      }
+
+      code {
+        font-family: "Consolas", "SFMono-Regular", monospace;
+        font-size: 0.94em;
+        color: var(--text-primary);
+      }
+
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        border: 0;
+      }
+
+      .page {
+        position: relative;
+        overflow: hidden;
+      }
+
+      .section-shell,
+      .hero-shell,
+      .footer-shell {
+        width: var(--page-width);
+        margin: 0 auto;
+      }
+
+      .section {
+        padding: 6rem 0;
+      }
+
+      .section.reveal {
+        opacity: 0;
+        transform: translateY(24px);
+        transition:
+          opacity 0.5s ease,
+          transform 0.5s ease;
+      }
+
+      .section.reveal.is-visible {
+        opacity: 1;
+        transform: translateY(0);
+      }
+
+      .section-header {
+        margin-bottom: 2rem;
+      }
+
+      .section-header h2,
+      .privacy-copy h2,
+      .download-copy h2 {
+        margin: 0 0 1rem;
+        color: var(--text-primary);
+        font-family: var(--font-display);
+        font-size: clamp(2.2rem, 4vw, 2.25rem);
+        line-height: 1.15;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+      }
+
+      .section-header p,
+      .privacy-copy p,
+      .download-copy p,
+      .hero-copy p,
+      .footer-note,
+      .caption,
+      .step-card p,
+      .feature-card p,
+      .privacy-bullets li,
+      .system-line {
+        margin: 0;
+        color: var(--text-muted);
+        font-size: 1rem;
+        line-height: 1.75;
+      }
+
+      .hero {
+        position: relative;
+        min-height: 100svh;
+        padding: 1.25rem 0 2rem;
+      }
+
+      .hero-shell {
+        min-height: calc(100svh - 3.25rem);
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        gap: 1.9rem;
+      }
+
+      .site-nav {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        padding-top: 0.2rem;
+      }
+
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.75rem;
+        color: var(--text-primary);
+        font-weight: 500;
+        letter-spacing: 0.01em;
+      }
+
+      .brand-mark {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 2.2rem;
+        height: 2.2rem;
+        border-radius: 0.7rem;
+        background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
+        border: 1px solid color-mix(in srgb, var(--accent-primary) 22%, transparent);
+        color: var(--accent-primary);
+      }
+
+      .brand-mark svg,
+      .step-icon svg,
+      .feature-icon svg,
+      .check-icon svg {
+        width: 1.2rem;
+        height: 1.2rem;
+      }
+
+      .brand-wordmark {
+        font-size: 1rem;
+      }
+
+      .nav-links {
+        display: flex;
+        align-items: center;
+        gap: 1.5rem;
+      }
+
+      .nav-link {
+        color: var(--text-soft);
+        font-size: 0.95rem;
+        transition: color 0.2s ease;
+      }
+
+      .nav-link:hover,
+      .nav-link:focus-visible {
+        color: var(--text-primary);
+      }
+
+      .hero-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 2.35rem;
+        align-content: center;
+        justify-items: center;
+      }
+
+      .hero-copy {
+        max-width: 48rem;
+        text-align: center;
+      }
+
+      .hero-title {
+        margin: 0 0 1.2rem;
+        color: var(--text-primary);
+        font-family: var(--font-display);
+        font-size: clamp(3rem, 7vw, 4rem);
+        line-height: 1.04;
+        font-weight: 600;
+        letter-spacing: -0.03em;
+        opacity: 0;
+        animation: fade-only 0.55s ease forwards;
+        animation-delay: 0.4s;
+      }
+
+      .hero-title em {
+        font-style: italic;
+      }
+
+      .hero-subcopy {
+        display: grid;
+        gap: 0.85rem;
+        opacity: 0;
+        animation: fade-only 0.55s ease forwards;
+        animation-delay: 0.7s;
+      }
+
+      .hero-actions {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: center;
+        gap: 1rem 1.2rem;
+        margin-top: 2rem;
+        opacity: 0;
+        animation: fade-up 0.55s ease forwards;
+        animation-delay: 1s;
+      }
+
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 3.2rem;
+        padding: 0.85rem 1.35rem;
+        border-radius: 6px;
+        border: 1px solid transparent;
+        font-size: 0.98rem;
+        font-weight: 700;
+        transition:
+          background-color 0.2s ease,
+          border-color 0.2s ease,
+          color 0.2s ease,
+          transform 0.2s ease;
+      }
+
+      .button.primary {
+        background: var(--accent-primary);
+        color: var(--button-ink);
+        box-shadow: var(--shadow-soft);
+      }
+
+      .button.primary:hover,
+      .button.primary:focus-visible {
+        background: var(--accent-bright);
+        transform: scale(1.02);
+      }
+
+      .button.large {
+        min-height: 3.65rem;
+        padding: 1rem 1.8rem;
+        font-size: 1.04rem;
+      }
+
+      .ghost-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        color: var(--text-primary);
+        font-weight: 500;
+        transition:
+          color 0.2s ease,
+          transform 0.2s ease;
+      }
+
+      .ghost-link span {
+        color: var(--text-soft);
+        transition: color 0.2s ease;
+      }
+
+      .ghost-link:hover,
+      .ghost-link:focus-visible {
+        color: var(--text-primary);
+        transform: translateY(-1px);
+      }
+
+      .ghost-link:hover span,
+      .ghost-link:focus-visible span {
+        color: var(--text-muted);
+      }
+
+      .hero-visual {
+        position: relative;
+        width: min(100%, 1120px);
+        opacity: 0;
+        transform: translateY(20px);
+        animation: rise-in 0.7s ease forwards;
+        animation-delay: 1.2s;
+      }
+
+      .hero-visual .mock-window {
+        width: 100%;
+      }
+
+      .hero-visual::before {
+        content: "";
+        position: absolute;
+        inset: 9% 13% 17%;
+        border-radius: 999px;
+        background: radial-gradient(
+          circle,
+          color-mix(in srgb, var(--accent-primary) 22%, transparent) 0%,
+          color-mix(in srgb, var(--accent-primary) 10%, transparent) 40%,
+          transparent 74%
+        );
+        filter: blur(12px);
+      }
+
+      .hero-meta {
+        align-self: end;
+        text-align: center;
+        color: var(--text-soft);
+        font-size: 0.95rem;
+        letter-spacing: 0.01em;
+      }
+
+      .mock-window {
+        position: relative;
+        background: var(--shell-surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: 20px;
+        overflow: hidden;
+        box-shadow: var(--shadow-heavy);
+        backdrop-filter: blur(16px);
+      }
+
+      .mock-window.showcase-window {
+        height: auto;
+      }
+
+      .window-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        min-height: 2.8rem;
+        padding: 0 1rem;
+        background: var(--window-bar-bg);
+        border-bottom: 1px solid var(--border-subtle);
+        color: var(--text-soft);
+        font-size: 0.82rem;
+      }
+
+      .window-dots,
+      .window-controls {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+      }
+
+      .window-dots span,
+      .window-controls span {
+        width: 0.62rem;
+        height: 0.62rem;
+        border-radius: 50%;
+        background: rgba(127, 117, 105, 0.45);
+      }
+
+      .window-dots span:first-child {
+        background: rgba(207, 90, 68, 0.85);
+      }
+
+      .window-dots span:nth-child(2) {
+        background: rgba(239, 159, 68, 0.75);
+      }
+
+      .window-dots span:nth-child(3) {
+        background: rgba(119, 169, 95, 0.78);
+      }
+
+      .window-controls span {
+        width: 0.85rem;
+        height: 0.08rem;
+        border-radius: 999px;
+      }
+
+      .window-title {
+        flex: 1;
+        text-align: center;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .window-body {
+        display: grid;
+        grid-template-columns: 175px minmax(0, 1fr) 220px;
+        min-height: 31rem;
+        background: var(--window-body-bg);
+      }
+
+      .window-body.showcase-body {
+        min-height: 28rem;
+      }
+
+      .side-rail {
+        display: flex;
+        flex-direction: column;
+        gap: 0.9rem;
+        padding: 1rem;
+        background: var(--rail-bg);
+      }
+
+      .side-rail.left {
+        border-right: 1px solid var(--border-subtle);
+      }
+
+      .side-rail.right {
+        border-left: 1px solid var(--border-subtle);
+      }
+
+      .rail-card,
+      .utility-card {
+        background: var(--card-surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: 14px;
+        padding: 0.9rem;
+      }
+
+      .rail-card {
+        display: grid;
+        gap: 0.75rem;
+      }
+
+      .mini-label,
+      .metric-label,
+      .timeline-heading span,
+      .capture-meta,
+      .capture-note-label {
+        color: var(--text-soft);
+        font-size: 0.72rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .mini-title,
+      .metric-value,
+      .utility-card strong,
+      .capture-heading strong {
+        color: var(--text-primary);
+        font-size: 0.96rem;
+        font-weight: 700;
+        line-height: 1.3;
+      }
+
+      .mini-copy,
+      .capture-heading span,
+      .capture-note,
+      .timeline-heading small,
+      .storage-footnote {
+        color: var(--text-muted);
+        font-size: 0.82rem;
+        line-height: 1.6;
+      }
+      .status-chip,
+      .soft-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        width: fit-content;
+        padding: 0.38rem 0.6rem;
+        border-radius: 999px;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+      }
+
+      .status-chip {
+        background: var(--status-chip-bg);
+        border: 1px solid var(--status-chip-border);
+        color: var(--status-chip-text);
+      }
+
+      .soft-chip {
+        background: var(--soft-chip-bg);
+        border: 1px solid var(--soft-chip-border);
+        color: var(--soft-chip-text);
+      }
+
+      .day-stack {
+        display: grid;
+        gap: 0.6rem;
+      }
+
+      .day-item {
+        display: grid;
+        gap: 0.55rem;
+        padding: 0.75rem;
+        border-radius: 12px;
+        background: var(--day-bg);
+        border: 1px solid transparent;
+      }
+
+      .day-item.active {
+        border-color: var(--border-visible);
+        background: var(--day-active-bg);
+      }
+
+      .day-item span {
+        color: var(--text-primary);
+        font-size: 0.84rem;
+        font-weight: 500;
+      }
+
+      .day-item small {
+        color: var(--text-soft);
+        font-size: 0.78rem;
+      }
+
+      .density-bar {
+        display: grid;
+        grid-template-columns: repeat(8, 1fr);
+        gap: 0.16rem;
+        align-items: end;
+        min-height: 1.05rem;
+      }
+
+      .density-bar span {
+        display: block;
+        border-radius: 999px;
+        background: color-mix(in srgb, var(--accent-primary) 48%, transparent);
+      }
+
+      .density-bar span:nth-child(odd) {
+        background: color-mix(in srgb, var(--accent-bright) 38%, transparent);
+      }
+
+      .viewer-shell {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+        padding: 1rem;
+      }
+
+      .viewer-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 0.9rem 1rem;
+        background: var(--panel-surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: 16px;
+      }
+
+      .toolbar-cluster {
+        display: flex;
+        align-items: center;
+        gap: 0.65rem;
+        flex-wrap: wrap;
+      }
+
+      .toolbar-divider {
+        width: 1px;
+        align-self: stretch;
+        background: var(--border-subtle);
+      }
+
+      .viewer-stage {
+        flex: 1;
+        display: grid;
+        grid-template-columns: minmax(0, 1.32fr) 180px;
+        gap: 1rem;
+      }
+
+      .capture-frame {
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        gap: 0.9rem;
+        padding: 1rem;
+        background: var(--panel-surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: 18px;
+      }
+
+      .capture-heading {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+      }
+
+      .workspace-scene {
+        display: grid;
+        grid-template-columns: 1.18fr 0.82fr;
+        gap: 0.8rem;
+        min-height: 14.5rem;
+      }
+
+      .scene-panel,
+      .stat-panel,
+      .note-panel,
+      .thumb {
+        border-radius: 12px;
+      }
+
+      .scene-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 0.7rem;
+        padding: 0.8rem;
+        background: var(--inner-panel-bg);
+        border: 1px solid var(--inner-panel-border);
+      }
+
+      .line-cluster {
+        display: grid;
+        gap: 0.4rem;
+      }
+
+      .line-cluster span {
+        display: block;
+        height: 0.52rem;
+        border-radius: 999px;
+        background: rgba(169, 156, 141, 0.12);
+      }
+
+      .line-cluster span:nth-child(1) {
+        width: 86%;
+      }
+
+      .line-cluster span:nth-child(2) {
+        width: 72%;
+      }
+
+      .line-cluster span:nth-child(3) {
+        width: 64%;
+      }
+
+      .line-cluster span:nth-child(4) {
+        width: 78%;
+      }
+
+      .line-cluster.amber span:nth-child(2),
+      .line-cluster.amber span:nth-child(4) {
+        background: color-mix(in srgb, var(--accent-primary) 22%, transparent);
+      }
+
+      .line-cluster.blue span:nth-child(1),
+      .line-cluster.blue span:nth-child(3) {
+        background: color-mix(in srgb, var(--accent-blue) 20%, transparent);
+      }
+
+      .terminal-window {
+        display: grid;
+        gap: 0.55rem;
+        padding: 0.75rem;
+        background: var(--terminal-bg);
+        border: 1px solid var(--terminal-border);
+        border-radius: 12px;
+      }
+
+      .terminal-line {
+        display: flex;
+        gap: 0.5rem;
+        align-items: center;
+        font-size: 0.75rem;
+        color: var(--text-muted);
+      }
+
+      .terminal-line::before {
+        content: "";
+        width: 0.35rem;
+        height: 0.35rem;
+        border-radius: 50%;
+        background: rgba(119, 169, 95, 0.9);
+      }
+
+      .terminal-line.warn::before {
+        background: var(--accent-bright);
+      }
+
+      .terminal-line.alert::before {
+        background: var(--accent-red);
+      }
+
+      .right-panel-stack {
+        display: grid;
+        grid-template-rows: 1fr auto;
+        gap: 0.8rem;
+      }
+
+      .stat-panel,
+      .note-panel {
+        display: grid;
+        gap: 0.7rem;
+        padding: 0.8rem;
+        background: var(--inner-panel-bg);
+        border: 1px solid var(--inner-panel-border);
+      }
+
+      .stat-panel .metric-row {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 0.75rem;
+      }
+
+      .progress {
+        width: 100%;
+        height: 0.48rem;
+        border-radius: 999px;
+        background: var(--progress-track);
+        overflow: hidden;
+      }
+
+      .progress span {
+        display: block;
+        height: 100%;
+        border-radius: inherit;
+        background: linear-gradient(
+          90deg,
+          color-mix(in srgb, var(--accent-primary) 72%, transparent),
+          color-mix(in srgb, var(--accent-bright) 92%, transparent)
+        );
+      }
+
+      .capture-note {
+        min-height: 4.3rem;
+        padding: 0.8rem;
+        border-radius: 12px;
+        background: color-mix(in srgb, var(--window-body-bg) 78%, transparent);
+        border: 1px solid var(--inner-panel-border);
+      }
+
+      .timeline-strip {
+        display: grid;
+        gap: 0.8rem;
+        padding: 0.9rem;
+        background: var(--panel-surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: 16px;
+      }
+
+      .timeline-heading {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+      }
+
+      .thumb-grid {
+        display: grid;
+        grid-template-columns: repeat(10, minmax(0, 1fr));
+        gap: 0.45rem;
+      }
+
+      .thumb {
+        position: relative;
+        aspect-ratio: 1.25 / 1;
+        overflow: hidden;
+        background: linear-gradient(145deg, var(--thumb-top), var(--thumb-bottom));
+        border: 1px solid rgba(211, 177, 132, 0.08);
+      }
+
+      .thumb::before,
+      .thumb::after {
+        content: "";
+        position: absolute;
+        left: 10%;
+        right: 10%;
+        border-radius: 999px;
+      }
+
+      .thumb::before {
+        top: 18%;
+        height: 18%;
+        background: var(--thumb-overlay-top);
+      }
+
+      .thumb::after {
+        bottom: 14%;
+        height: 24%;
+        background: var(--thumb-overlay-bottom);
+      }
+
+      .thumb.active {
+        border-color: color-mix(in srgb, var(--accent-bright) 80%, transparent);
+        box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-bright) 28%, transparent);
+      }
+
+      .thumb.dark::after {
+        background: var(--thumb-overlay-alt);
+      }
+
+      .thumb.warm::before {
+        background: var(--thumb-overlay-warm);
+      }
+
+      .utility-card {
+        display: grid;
+        gap: 0.7rem;
+      }
+
+      .utility-card .metric-grid {
+        display: grid;
+        gap: 0.55rem;
+      }
+
+      .theme-swatches {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 0.45rem;
+      }
+
+      .theme-swatches span {
+        display: block;
+        aspect-ratio: 1;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+
+      .theme-swatches span:nth-child(1) {
+        background: linear-gradient(145deg, #0f0d0b, #d58a33);
+      }
+
+      .theme-swatches span:nth-child(2) {
+        background: linear-gradient(145deg, #101714, #3a6d53);
+      }
+
+      .theme-swatches span:nth-child(3) {
+        background: linear-gradient(145deg, #dbe4eb, #607789);
+      }
+
+      .theme-swatches span:nth-child(4) {
+        background: linear-gradient(145deg, #241c24, #704b75);
+      }
+
+      .theme-swatches span:nth-child(5) {
+        background: linear-gradient(145deg, #101820, #345a86);
+      }
+
+      .theme-playground {
+        display: grid;
+        grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+        gap: 1.25rem;
+        align-items: start;
+        margin-bottom: 1.8rem;
+      }
+
+      .theme-spotlight,
+      .theme-toggle-grid {
+        padding: 1.25rem;
+        background: var(--card-surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: 18px;
+      }
+
+      .theme-spotlight {
+        display: grid;
+        gap: 0.9rem;
+      }
+
+      .theme-badge {
+        display: inline-flex;
+        width: fit-content;
+        padding: 0.35rem 0.65rem;
+        border-radius: 999px;
+        background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
+        border: 1px solid color-mix(in srgb, var(--accent-primary) 24%, transparent);
+        color: var(--text-primary);
+        font-size: 0.74rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .theme-spotlight h3 {
+        margin: 0;
+        color: var(--text-primary);
+        font-size: 1.45rem;
+        line-height: 1.25;
+      }
+
+      .theme-toggle-grid {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 0.8rem;
+      }
+
+      .theme-toggle {
+        display: grid;
+        gap: 0.75rem;
+        padding: 0.9rem;
+        border: 1px solid var(--border-subtle);
+        border-radius: 14px;
+        background: color-mix(in srgb, var(--shell-surface) 62%, transparent);
+        color: inherit;
+        text-align: left;
+        cursor: pointer;
+        transition:
+          transform 0.2s ease,
+          border-color 0.2s ease,
+          background-color 0.2s ease;
+      }
+
+      .theme-toggle:hover,
+      .theme-toggle:focus-visible {
+        border-color: var(--border-visible);
+        transform: translateY(-1px);
+      }
+
+      .theme-toggle.active {
+        border-color: var(--border-visible);
+        background: color-mix(in srgb, var(--card-surface) 82%, transparent);
+        box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-primary) 30%, transparent);
+      }
+
+      .theme-toggle-swatches {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 0.28rem;
+      }
+
+      .theme-toggle-swatches span {
+        display: block;
+        height: 0.62rem;
+        border-radius: 999px;
+      }
+
+      .theme-toggle-name {
+        color: var(--text-primary);
+        font-size: 0.88rem;
+        font-weight: 700;
+      }
+
+      .theme-toggle-mood {
+        color: var(--text-soft);
+        font-size: 0.76rem;
+        line-height: 1.5;
+      }
+
+      .theme-toggle[data-theme-option="amber-noir"] .theme-toggle-swatches span:nth-child(1) {
+        background: #0f0d0b;
+      }
+
+      .theme-toggle[data-theme-option="amber-noir"] .theme-toggle-swatches span:nth-child(2) {
+        background: #251f1b;
+      }
+
+      .theme-toggle[data-theme-option="amber-noir"] .theme-toggle-swatches span:nth-child(3) {
+        background: #d58a33;
+      }
+
+      .theme-toggle[data-theme-option="amber-noir"] .theme-toggle-swatches span:nth-child(4) {
+        background: #2f5d8a;
+      }
+
+      .theme-toggle[data-theme-option="obsidian-jade"] .theme-toggle-swatches span:nth-child(1) {
+        background: #0b0f0e;
+      }
+
+      .theme-toggle[data-theme-option="obsidian-jade"] .theme-toggle-swatches span:nth-child(2) {
+        background: #0e1411;
+      }
+
+      .theme-toggle[data-theme-option="obsidian-jade"] .theme-toggle-swatches span:nth-child(3) {
+        background: #3ecf8e;
+      }
+
+      .theme-toggle[data-theme-option="obsidian-jade"] .theme-toggle-swatches span:nth-child(4) {
+        background: #1e5f8a;
+      }
+
+      .theme-toggle[data-theme-option="arctic-slate"] .theme-toggle-swatches span:nth-child(1) {
+        background: #f0f2f5;
+      }
+
+      .theme-toggle[data-theme-option="arctic-slate"] .theme-toggle-swatches span:nth-child(2) {
+        background: #ffffff;
+      }
+
+      .theme-toggle[data-theme-option="arctic-slate"] .theme-toggle-swatches span:nth-child(3) {
+        background: #3a6fd8;
+      }
+
+      .theme-toggle[data-theme-option="arctic-slate"] .theme-toggle-swatches span:nth-child(4) {
+        background: #7c5cbf;
+      }
+
+      .theme-toggle[data-theme-option="deep-plum"] .theme-toggle-swatches span:nth-child(1) {
+        background: #0d0b12;
+      }
+
+      .theme-toggle[data-theme-option="deep-plum"] .theme-toggle-swatches span:nth-child(2) {
+        background: #18151f;
+      }
+
+      .theme-toggle[data-theme-option="deep-plum"] .theme-toggle-swatches span:nth-child(3) {
+        background: #9b6dff;
+      }
+
+      .theme-toggle[data-theme-option="deep-plum"] .theme-toggle-swatches span:nth-child(4) {
+        background: #d4547a;
+      }
+
+      .theme-toggle[data-theme-option="midnight-blue"] .theme-toggle-swatches span:nth-child(1) {
+        background: #090c12;
+      }
+
+      .theme-toggle[data-theme-option="midnight-blue"] .theme-toggle-swatches span:nth-child(2) {
+        background: #101521;
+      }
+
+      .theme-toggle[data-theme-option="midnight-blue"] .theme-toggle-swatches span:nth-child(3) {
+        background: #4d8ef0;
+      }
+
+      .theme-toggle[data-theme-option="midnight-blue"] .theme-toggle-swatches span:nth-child(4) {
+        background: #2a7a8a;
+      }
+
+      .panel-section {
+        background: var(--panel-surface);
+        border-top: 1px solid rgba(255, 255, 255, 0.02);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.02);
+      }
+
+      .steps-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 1.1rem;
+      }
+
+      .step-card {
+        padding: 1.4rem;
+        border: 1px solid var(--border-subtle);
+        border-radius: 16px;
+        background: rgba(45, 37, 32, 0.52);
+      }
+
+      .step-icon,
+      .feature-icon,
+      .check-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--accent-primary);
+      }
+
+      .step-number {
+        margin: 1rem 0 0.6rem;
+        color: var(--text-soft);
+        font-size: 0.78rem;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+
+      .step-card h3,
+      .feature-card h3 {
+        margin: 0 0 0.7rem;
+        font-size: 1.25rem;
+        line-height: 1.35;
+        font-weight: 600;
+        color: var(--text-primary);
+      }
+
+      .privacy-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+        gap: 2.5rem;
+        align-items: start;
+      }
+
+      .privacy-card {
+        padding: 1.55rem 1.5rem 1.55rem 1.35rem;
+        background: var(--card-surface);
+        border: 1px solid var(--border-subtle);
+        border-left: 3px solid var(--accent-primary);
+        border-radius: 16px;
+        box-shadow: var(--shadow-soft);
+      }
+
+      .privacy-bullets {
+        display: grid;
+        gap: 0.95rem;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .privacy-bullets li {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 0.8rem;
+        align-items: start;
+      }
+
+      .features-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 1rem;
+      }
+
+      .feature-card {
+        padding: 1.35rem;
+        background: var(--card-surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: 16px;
+        transition:
+          border-color 0.2s ease,
+          transform 0.2s ease;
+      }
+
+      .feature-card:hover,
+      .feature-card:focus-within {
+        border-color: var(--border-visible);
+        transform: translateY(-2px);
+      }
+
+      .feature-icon {
+        margin-bottom: 0.95rem;
+      }
+
+      .showcase-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 1.75rem;
+        align-items: start;
+      }
+
+      .showcase-window {
+        isolation: isolate;
+        width: 100%;
+      }
+
+      .showcase-secondary {
+        width: min(100%, 780px);
+        justify-self: end;
+        margin-top: 0;
+      }
+
+      .showcase-secondary .window-body {
+        grid-template-columns: 1fr;
+      }
+
+      .showcase-secondary .viewer-stage {
+        grid-template-columns: 1fr;
+      }
+
+      .showcase-secondary .side-rail.right {
+        border-left: 0;
+        border-top: 1px solid var(--border-subtle);
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        align-items: stretch;
+      }
+
+      .showcase-secondary .timeline-strip {
+        display: none;
+      }
+
+      .hero-grid > *,
+      .theme-playground > *,
+      .showcase-grid > *,
+      .window-body > *,
+      .viewer-stage > *,
+      .workspace-scene > *,
+      .right-panel-stack > *,
+      .side-rail,
+      .viewer-shell,
+      .capture-frame,
+      .scene-panel,
+      .stat-panel,
+      .note-panel,
+      .utility-card,
+      .timeline-strip {
+        min-width: 0;
+      }
+
+      .window-body > *,
+      .viewer-shell,
+      .viewer-stage > *,
+      .workspace-scene,
+      .capture-frame,
+      .right-panel-stack {
+        min-height: 0;
+      }
+
+      .caption {
+        margin-top: 1.1rem;
+        text-align: center;
+        color: var(--text-soft);
+      }
+
+      .download-section {
+        background: var(--panel-surface);
+      }
+
+      .download-shell {
+        display: grid;
+        justify-items: center;
+        text-align: center;
+        gap: 1.35rem;
+      }
+
+      .download-copy {
+        max-width: 34rem;
+      }
+
+      .download-links {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 1.15rem;
+      }
+
+      .download-links a {
+        color: var(--text-muted);
+        font-size: 0.96rem;
+        transition: color 0.2s ease;
+      }
+
+      .download-links a:hover,
+      .download-links a:focus-visible {
+        color: var(--text-primary);
+      }
+
+      .system-line {
+        color: var(--text-soft);
+      }
+
+      .site-footer {
+        border-top: 1px solid var(--border-subtle);
+        padding: 1.4rem 0 1.8rem;
+      }
+
+      .footer-shell {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+      }
+
+      .footer-note {
+        color: var(--text-soft);
+        text-align: center;
+      }
+
+      .footer-github {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 2.4rem;
+        height: 2.4rem;
+        color: var(--text-soft);
+        border: 1px solid var(--border-subtle);
+        border-radius: 999px;
+        transition:
+          color 0.2s ease,
+          border-color 0.2s ease,
+          transform 0.2s ease;
+      }
+
+      .footer-github svg {
+        width: 1.1rem;
+        height: 1.1rem;
+      }
+
+      .footer-github:hover,
+      .footer-github:focus-visible {
+        color: var(--text-primary);
+        border-color: var(--border-visible);
+        transform: translateY(-1px);
+      }
+
+      a:focus-visible,
+      button:focus-visible {
+        outline: 2px solid rgba(239, 159, 68, 0.75);
+        outline-offset: 3px;
+      }
+
+      @keyframes fade-only {
+        from {
+          opacity: 0;
+        }
+
+        to {
+          opacity: 1;
+        }
+      }
+
+      @keyframes fade-up {
+        from {
+          opacity: 0;
+          transform: translateY(14px);
+        }
+
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      @keyframes rise-in {
+        from {
+          opacity: 0;
+          transform: translateY(20px);
+        }
+
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+      @media (max-width: 1080px) {
+        .hero-grid,
+        .privacy-layout,
+        .theme-playground,
+        .showcase-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .hero-copy {
+          max-width: 100%;
+        }
+
+        .window-body,
+        .window-body.showcase-body {
+          grid-template-columns: 150px minmax(0, 1fr);
+        }
+
+        .side-rail.right {
+          grid-column: 1 / -1;
+          border-left: 0;
+          border-top: 1px solid var(--border-subtle);
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          align-items: start;
+        }
+
+        .showcase-secondary .window-body {
+          grid-template-columns: 1fr;
+        }
+
+        .showcase-secondary {
+          margin-top: 0;
+        }
+
+        .features-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .theme-toggle-grid {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 840px) {
+        .section {
+          padding: 4.6rem 0;
+        }
+
+        .site-nav {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        .nav-links {
+          gap: 1rem;
+          flex-wrap: wrap;
+        }
+
+        .steps-grid,
+        .features-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .viewer-stage,
+        .workspace-scene {
+          grid-template-columns: 1fr;
+        }
+
+        .thumb-grid {
+          grid-template-columns: repeat(5, minmax(0, 1fr));
+        }
+
+        .theme-toggle-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 680px) {
+        .hero {
+          padding-top: 1rem;
+        }
+
+        .hero-shell {
+          min-height: auto;
+        }
+
+        .hero-title {
+          font-size: clamp(2.45rem, 10vw, 3.3rem);
+        }
+
+        .hero-meta {
+          text-align: left;
+        }
+
+        .window-body,
+        .window-body.showcase-body {
+          grid-template-columns: 1fr;
+        }
+
+        .side-rail.left,
+        .side-rail.right {
+          border: 0;
+          border-top: 1px solid var(--border-subtle);
+          display: flex;
+        }
+
+        .viewer-toolbar,
+        .capture-heading,
+        .timeline-heading,
+        .footer-shell {
+          flex-direction: column;
+          align-items: flex-start;
+        }
+
+        .download-links {
+          flex-direction: column;
+          gap: 0.55rem;
+        }
+      }
+
+      @media (max-width: 480px) {
+        .section-shell,
+        .hero-shell,
+        .footer-shell {
+          width: min(100% - 1.25rem, 1180px);
+        }
+
+        .button,
+        .button.large {
+          width: 100%;
+        }
+
+        .hero-actions {
+          align-items: stretch;
+        }
+
+        .ghost-link {
+          justify-content: center;
+          width: 100%;
+          padding-top: 0.2rem;
+        }
+
+        .thumb-grid {
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+
+        .theme-toggle-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .footer-shell {
+          align-items: flex-start;
+        }
+
+        .theme-toggle {
+          padding: 0.85rem;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          scroll-behavior: auto;
+        }
+
+        *,
+        *::before,
+        *::after {
+          animation: none !important;
+          transition: none !important;
+        }
+
+        .section.reveal {
+          opacity: 1;
+          transform: none;
+        }
+      }
+    </style>
+  </head>
+  <body data-theme="amber-noir">
+    <svg class="sr-only" aria-hidden="true" focusable="false">
+      <symbol id="icon-film" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="4" y="5" width="16" height="14" rx="2"></rect>
+        <path d="M8 5v14M16 5v14M4 9h4M4 15h4M16 9h4M16 15h4"></path>
+      </symbol>
+      <symbol id="icon-tray" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 8.5 7.4 5h9.2L20 8.5v8.3H4z"></path>
+        <path d="M8 13.2h8"></path>
+        <path d="M10 17h4"></path>
+      </symbol>
+      <symbol id="icon-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="8"></circle>
+        <path d="M12 8v4.6l3.1 1.8"></path>
+      </symbol>
+      <symbol id="icon-timeline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 7h6"></path>
+        <path d="M14 7h6"></path>
+        <path d="M4 17h4"></path>
+        <path d="M12 17h8"></path>
+        <circle cx="12" cy="7" r="2"></circle>
+        <circle cx="10" cy="17" r="2"></circle>
+      </symbol>
+      <symbol id="icon-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m5 12.5 4.2 4.2L19 7"></path>
+      </symbol>
+      <symbol id="icon-note" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M6 4.5h9l3 3V19.5H6z"></path>
+        <path d="M15 4.5v3h3"></path>
+        <path d="M9 11h6"></path>
+        <path d="M9 15h4"></path>
+      </symbol>
+      <symbol id="icon-theme" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 4a8 8 0 1 0 8 8c0-.5 0-.8-.1-1.2A4.6 4.6 0 0 1 15.4 15 3.4 3.4 0 0 1 12 11.6c0-1.5.9-2.8 2.2-3.3A8.1 8.1 0 0 0 12 4Z"></path>
+      </symbol>
+      <symbol id="icon-storage" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <ellipse cx="12" cy="6" rx="6.5" ry="2.5"></ellipse>
+        <path d="M5.5 6v6c0 1.4 2.9 2.5 6.5 2.5s6.5-1.1 6.5-2.5V6"></path>
+        <path d="M5.5 12v6c0 1.4 2.9 2.5 6.5 2.5s6.5-1.1 6.5-2.5v-6"></path>
+      </symbol>
+      <symbol id="icon-fullscreen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M8 4H4v4"></path>
+        <path d="M16 4h4v4"></path>
+        <path d="M8 20H4v-4"></path>
+        <path d="M16 20h4v-4"></path>
+      </symbol>
+      <symbol id="icon-github" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M12 .7a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2.2c-3.2.7-3.9-1.4-3.9-1.4-.5-1.4-1.3-1.8-1.3-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 .1 1.6-.6 1.9-1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.8 0-1.3.5-2.3 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.6 11.6 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.7.2 2.9.1 3.2.8.9 1.2 1.9 1.2 3.2 0 4.5-2.7 5.5-5.3 5.8.4.4.8 1.1.8 2.3v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .7Z"></path>
+      </symbol>
+    </svg>
+
+    <div class="page">
+      <header class="hero" id="top">
+        <div class="hero-shell">
+          <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="#top" aria-label="MemoryLane home">
+              <span class="brand-mark" aria-hidden="true">
+                <svg>
+                  <use href="#icon-film"></use>
+                </svg>
+              </span>
+              <span class="brand-wordmark">MemoryLane</span>
+            </a>
+            <div class="nav-links">
+              <a class="nav-link" href="#how-it-works">How it works</a>
+              <a class="nav-link" href="#privacy">Privacy</a>
+              <a class="nav-link" href="#download">Download</a>
+            </div>
+          </nav>
+
+          <div class="hero-grid">
+            <div class="hero-copy">
+              <h1 class="hero-title"><em>A passive diary of your screen.</em></h1>
+              <div class="hero-subcopy">
+                <p>
+                  MemoryLane runs silently in your system tray, captures your screen at a chosen interval, and lets you
+                  scroll back through your day capture by capture.
+                </p>
+                <p>It feels like a rewindable memory of everything you worked on, without changing how you work.</p>
+              </div>
+              <div class="hero-actions">
+                <!-- TODO: Replace with Windows download URL -->
+                <a class="button primary" href="#">Download for Windows</a>
+                <!-- TODO: Replace with GitHub repository URL -->
+                <a class="ghost-link" href="#">
+                  View on GitHub
+                  <span>Source, issues, releases</span>
+                </a>
+              </div>
+            </div>
+
+            <div class="hero-visual" aria-hidden="true">
+              <div class="mock-window">
+                <div class="window-bar">
+                  <div class="window-dots">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                  </div>
+                  <div class="window-title">MemoryLane &bull; Sunday, Apr 19 &bull; 8:42 PM</div>
+                  <div class="window-controls">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                  </div>
+                </div>
+                <div class="window-body">
+                  <aside class="side-rail left">
+                    <div class="rail-card">
+                      <span class="status-chip">Local only</span>
+                      <div>
+                        <div class="mini-label">Today</div>
+                        <div class="mini-title">178 captures</div>
+                        <div class="mini-copy">From 8:00 AM to 8:42 PM</div>
+                      </div>
+                    </div>
+                    <div class="day-stack">
+                      <div class="day-item active">
+                        <span>Apr 19</span>
+                        <small>178 captures</small>
+                        <div class="density-bar">
+                          <span style="height: 54%"></span>
+                          <span style="height: 78%"></span>
+                          <span style="height: 62%"></span>
+                          <span style="height: 92%"></span>
+                          <span style="height: 80%"></span>
+                          <span style="height: 64%"></span>
+                          <span style="height: 46%"></span>
+                          <span style="height: 36%"></span>
+                        </div>
+                      </div>
+                      <div class="day-item">
+                        <span>Apr 18</span>
+                        <small>164 captures</small>
+                        <div class="density-bar">
+                          <span style="height: 42%"></span>
+                          <span style="height: 56%"></span>
+                          <span style="height: 76%"></span>
+                          <span style="height: 72%"></span>
+                          <span style="height: 66%"></span>
+                          <span style="height: 48%"></span>
+                          <span style="height: 32%"></span>
+                          <span style="height: 24%"></span>
+                        </div>
+                      </div>
+                      <div class="day-item">
+                        <span>Apr 17</span>
+                        <small>151 captures</small>
+                        <div class="density-bar">
+                          <span style="height: 38%"></span>
+                          <span style="height: 51%"></span>
+                          <span style="height: 58%"></span>
+                          <span style="height: 82%"></span>
+                          <span style="height: 63%"></span>
+                          <span style="height: 44%"></span>
+                          <span style="height: 28%"></span>
+                          <span style="height: 20%"></span>
+                        </div>
+                      </div>
+                    </div>
+                  </aside>
+
+                  <div class="viewer-shell">
+                    <div class="viewer-toolbar">
+                      <div class="toolbar-cluster">
+                        <span class="soft-chip">Timeline review</span>
+                        <div class="toolbar-divider"></div>
+                        <div>
+                          <div class="mini-label">Selected capture</div>
+                          <div class="mini-title">8:42 PM &bull; Coding session</div>
+                        </div>
+                      </div>
+                      <div class="toolbar-cluster">
+                        <span class="mini-copy">Active &middot; every 2 min</span>
+                      </div>
+                    </div>
+
+                    <div class="viewer-stage">
+                      <section class="capture-frame">
+                        <div class="capture-heading">
+                          <div>
+                            <div class="capture-meta">Current frame</div>
+                            <strong>Workspace rewind</strong>
+                          </div>
+                          <span class="soft-chip">Fullscreen ready</span>
+                        </div>
+                        <div class="workspace-scene">
+                          <div class="scene-panel">
+                            <div class="mini-label">Editor</div>
+                            <div class="line-cluster amber">
+                              <span></span>
+                              <span></span>
+                              <span></span>
+                              <span></span>
+                            </div>
+                            <div class="terminal-window">
+                              <div class="terminal-line">npm run tauri dev</div>
+                              <div class="terminal-line warn">watching captures.db for updates</div>
+                              <div class="terminal-line">storage cap: 5.0 GB</div>
+                              <div class="terminal-line">next capture in 01:12</div>
+                            </div>
+                          </div>
+                          <div class="right-panel-stack">
+                            <div class="stat-panel">
+                              <div class="mini-label">Day summary</div>
+                              <div class="metric-row">
+                                <span class="metric-label">Notes</span>
+                                <span class="metric-value">7</span>
+                              </div>
+                              <div class="metric-row">
+                                <span class="metric-label">Focus blocks</span>
+                                <span class="metric-value">4</span>
+                              </div>
+                              <div class="progress">
+                                <span style="width: 64%"></span>
+                              </div>
+                              <div class="storage-footnote">Storage use is under cap. Oldest days roll off when needed.</div>
+                            </div>
+                            <div class="note-panel">
+                              <div class="capture-note-label">Note</div>
+                              <div class="capture-note">
+                                Finished the settings screen, reviewed storage cleanup logic, and wrote down follow-up ideas.
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                        <div class="capture-heading">
+                          <span class="mini-copy">Sunday, Apr 19</span>
+                          <span class="mini-copy">Capture 143 of 178</span>
+                        </div>
+                      </section>
+
+                      <aside class="utility-card">
+                        <div>
+                          <div class="mini-label">Storage</div>
+                          <strong>2.8 GB of 5.0 GB</strong>
+                        </div>
+                        <div class="progress">
+                          <span style="width: 56%"></span>
+                        </div>
+                        <div class="metric-grid">
+                          <div>
+                            <div class="mini-label">Retention</div>
+                            <div class="mini-copy">30 days</div>
+                          </div>
+                          <div>
+                            <div class="mini-label">Notes</div>
+                            <div class="mini-copy">Save per capture</div>
+                          </div>
+                          <div>
+                            <div class="mini-label">Themes</div>
+                            <div class="theme-swatches">
+                              <span></span>
+                              <span></span>
+                              <span></span>
+                              <span></span>
+                              <span></span>
+                            </div>
+                          </div>
+                        </div>
+                      </aside>
+                    </div>
+
+                    <div class="timeline-strip">
+                      <div class="timeline-heading">
+                        <span>Timeline</span>
+                        <small>8:00 AM &rarr; 8:42 PM</small>
+                      </div>
+                      <div class="thumb-grid">
+                        <div class="thumb"></div>
+                        <div class="thumb warm"></div>
+                        <div class="thumb"></div>
+                        <div class="thumb dark"></div>
+                        <div class="thumb"></div>
+                        <div class="thumb active"></div>
+                        <div class="thumb warm"></div>
+                        <div class="thumb"></div>
+                        <div class="thumb dark"></div>
+                        <div class="thumb"></div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <aside class="side-rail right">
+                    <div class="utility-card">
+                      <div>
+                        <div class="mini-label">Capture note</div>
+                        <strong>Saved</strong>
+                      </div>
+                      <div class="capture-note">&quot;Fix release copy and link changelog in footer.&quot;</div>
+                    </div>
+                    <div class="utility-card">
+                      <div>
+                        <div class="mini-label">Cadence</div>
+                        <strong>2 minutes</strong>
+                      </div>
+                      <div class="mini-copy">Choose anything from 1 minute to 4 hours.</div>
+                    </div>
+                    <div class="utility-card">
+                      <div>
+                        <div class="mini-label">Storage path</div>
+                        <strong>AppData</strong>
+                      </div>
+                      <div class="mini-copy">Local captures, local notes, local cleanup rules.</div>
+                    </div>
+                  </aside>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <p class="hero-meta">Free &middot; Open source &middot; Windows 10/11 &middot; No account required</p>
+        </div>
+      </header>
+
+      <main>
+        <section class="section panel-section reveal" id="how-it-works">
+          <div class="section-shell">
+            <div class="section-header">
+              <h2>Simple by design.</h2>
+            </div>
+            <div class="steps-grid">
+              <article class="step-card">
+                <div class="step-icon" aria-hidden="true">
+                  <svg>
+                    <use href="#icon-tray"></use>
+                  </svg>
+                </div>
+                <div class="step-number">Step 01</div>
+                <h3>Runs quietly in your system tray.</h3>
+                <p>No window, no interruption, and no extra workflow to maintain.</p>
+              </article>
+              <article class="step-card">
+                <div class="step-icon" aria-hidden="true">
+                  <svg>
+                    <use href="#icon-clock"></use>
+                  </svg>
+                </div>
+                <div class="step-number">Step 02</div>
+                <h3>Captures at the interval you choose.</h3>
+                <p>Set it anywhere from 1 minute to 4 hours, depending on how much detail you want.</p>
+              </article>
+              <article class="step-card">
+                <div class="step-icon" aria-hidden="true">
+                  <svg>
+                    <use href="#icon-timeline"></use>
+                  </svg>
+                </div>
+                <div class="step-number">Step 03</div>
+                <h3>Open it whenever you need to rewind.</h3>
+                <p>Scroll back through your day capture by capture and recover the context you forgot.</p>
+              </article>
+            </div>
+          </div>
+        </section>
+
+        <section class="section reveal" id="privacy">
+          <div class="section-shell privacy-layout">
+            <div class="privacy-copy">
+              <h2>Your screen stays on your machine.</h2>
+              <p>
+                MemoryLane is a local desktop tool, not a service. Captures are stored under your Windows
+                <code>AppData</code> directory, and the app does not need an account, a backend, or a sync step to be
+                useful.
+              </p>
+              <p>
+                You decide how long captures are kept, and you decide how much disk space they are allowed to use. If
+                the storage cap is reached, MemoryLane deletes the oldest days first and keeps the recent history intact.
+              </p>
+            </div>
+
+            <aside class="privacy-card">
+              <ul class="privacy-bullets">
+                <li>
+                  <span class="check-icon" aria-hidden="true">
+                    <svg>
+                      <use href="#icon-check"></use>
+                    </svg>
+                  </span>
+                  <span>All screenshots and notes are written locally to <code>AppData</code>, not uploaded anywhere.</span>
+                </li>
+                <li>
+                  <span class="check-icon" aria-hidden="true">
+                    <svg>
+                      <use href="#icon-check"></use>
+                    </svg>
+                  </span>
+                  <span>No account required, no telemetry, no cloud sync, and no internet connection in the loop.</span>
+                </li>
+                <li>
+                  <span class="check-icon" aria-hidden="true">
+                    <svg>
+                      <use href="#icon-check"></use>
+                    </svg>
+                  </span>
+                  <span>Choose your retention period in days so the archive matches how far back you actually look.</span>
+                </li>
+                <li>
+                  <span class="check-icon" aria-hidden="true">
+                    <svg>
+                      <use href="#icon-check"></use>
+                    </svg>
+                  </span>
+                  <span>Set a storage cap in GB and MemoryLane automatically removes the oldest days when the cap is hit.</span>
+                </li>
+              </ul>
+            </aside>
+          </div>
+        </section>
+
+        <section class="section reveal" id="features">
+          <div class="section-shell">
+            <div class="section-header">
+              <h2>Everything you need. Nothing you don't.</h2>
+            </div>
+            <div class="features-grid">
+              <article class="feature-card">
+                <div class="feature-icon" aria-hidden="true">
+                  <svg>
+                    <use href="#icon-timeline"></use>
+                  </svg>
+                </div>
+                <h3>Timeline review</h3>
+                <p>Scroll through every capture of your day on a visual timeline strip that keeps the sequence intact.</p>
+              </article>
+              <article class="feature-card">
+                <div class="feature-icon" aria-hidden="true">
+                  <svg>
+                    <use href="#icon-note"></use>
+                  </svg>
+                </div>
+                <h3>Per-capture notes</h3>
+                <p>Add a note to any capture while reviewing so the screenshot has context when you return later.</p>
+              </article>
+              <article class="feature-card">
+                <div class="feature-icon" aria-hidden="true">
+                  <svg>
+                    <use href="#icon-theme"></use>
+                  </svg>
+                </div>
+                <h3>Multiple themes</h3>
+                <p>Choose from amber-noir, obsidian jade, arctic slate, deep plum, and midnight blue.</p>
+              </article>
+              <article class="feature-card">
+                <div class="feature-icon" aria-hidden="true">
+                  <svg>
+                    <use href="#icon-clock"></use>
+                  </svg>
+                </div>
+                <h3>Configurable cadence</h3>
+                <p>Set your capture interval anywhere from 1 minute to 4 hours and leave it there.</p>
+              </article>
+              <article class="feature-card">
+                <div class="feature-icon" aria-hidden="true">
+                  <svg>
+                    <use href="#icon-storage"></use>
+                  </svg>
+                </div>
+                <h3>Storage control</h3>
+                <p>Set a storage cap and retention period, then let MemoryLane clean up old days automatically.</p>
+              </article>
+              <article class="feature-card">
+                <div class="feature-icon" aria-hidden="true">
+                  <svg>
+                    <use href="#icon-fullscreen"></use>
+                  </svg>
+                </div>
+                <h3>Fullscreen viewer</h3>
+                <p>Open any capture full-screen and move through previous or next frames without losing your place.</p>
+              </article>
+            </div>
+          </div>
+        </section>
+
+        <section class="section reveal" id="showcase">
+          <div class="section-shell">
+            <div class="section-header">
+              <h2>Built for the way you actually work.</h2>
+            </div>
+
+            <div class="theme-playground">
+              <div class="theme-spotlight">
+                <span class="theme-badge">Live preview</span>
+                <h3 data-theme-name-display>Amber Noir</h3>
+                <p data-theme-mood-display>Warm, editorial, grounded.</p>
+                <p>
+                  Pick any shipped theme and the preview below updates in place, so you can see how MemoryLane feels
+                  before you download it.
+                </p>
+              </div>
+
+              <div class="theme-toggle-grid" aria-label="Available MemoryLane themes">
+                <button class="theme-toggle active" type="button" data-theme-option="amber-noir" aria-pressed="true">
+                  <span class="theme-toggle-swatches" aria-hidden="true">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                  </span>
+                  <span class="theme-toggle-name">Amber Noir</span>
+                  <span class="theme-toggle-mood">warm, editorial, grounded</span>
+                </button>
+                <button class="theme-toggle" type="button" data-theme-option="obsidian-jade" aria-pressed="false">
+                  <span class="theme-toggle-swatches" aria-hidden="true">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                  </span>
+                  <span class="theme-toggle-name">Obsidian Jade</span>
+                  <span class="theme-toggle-mood">cool, focused, terminal-adjacent</span>
+                </button>
+                <button class="theme-toggle" type="button" data-theme-option="arctic-slate" aria-pressed="false">
+                  <span class="theme-toggle-swatches" aria-hidden="true">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                  </span>
+                  <span class="theme-toggle-name">Arctic Slate</span>
+                  <span class="theme-toggle-mood">clean, minimal, professional</span>
+                </button>
+                <button class="theme-toggle" type="button" data-theme-option="deep-plum" aria-pressed="false">
+                  <span class="theme-toggle-swatches" aria-hidden="true">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                  </span>
+                  <span class="theme-toggle-name">Deep Plum</span>
+                  <span class="theme-toggle-mood">dramatic, editorial, premium dark</span>
+                </button>
+                <button class="theme-toggle" type="button" data-theme-option="midnight-blue" aria-pressed="false">
+                  <span class="theme-toggle-swatches" aria-hidden="true">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                  </span>
+                  <span class="theme-toggle-name">Midnight Blue</span>
+                  <span class="theme-toggle-mood">sleek, modern, lightly corporate</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="showcase-grid">
+              <div class="mock-window showcase-window" aria-hidden="true">
+                <div class="window-bar">
+                  <div class="window-dots">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                  </div>
+                  <div class="window-title">MemoryLane &bull; Daily review</div>
+                  <div class="window-controls">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                  </div>
+                </div>
+                <div class="window-body showcase-body">
+                  <aside class="side-rail left">
+                    <div class="rail-card">
+                      <div class="mini-label">Navigator</div>
+                      <div class="mini-title">April archive</div>
+                      <div class="mini-copy">Fast day switching with density bars.</div>
+                    </div>
+                    <div class="day-stack">
+                      <div class="day-item active">
+                        <span>Apr 19</span>
+                        <small>178 captures</small>
+                        <div class="density-bar">
+                          <span style="height: 46%"></span>
+                          <span style="height: 64%"></span>
+                          <span style="height: 86%"></span>
+                          <span style="height: 92%"></span>
+                          <span style="height: 74%"></span>
+                          <span style="height: 56%"></span>
+                          <span style="height: 30%"></span>
+                          <span style="height: 22%"></span>
+                        </div>
+                      </div>
+                      <div class="day-item">
+                        <span>Apr 18</span>
+                        <small>164 captures</small>
+                        <div class="density-bar">
+                          <span style="height: 38%"></span>
+                          <span style="height: 50%"></span>
+                          <span style="height: 60%"></span>
+                          <span style="height: 75%"></span>
+                          <span style="height: 58%"></span>
+                          <span style="height: 42%"></span>
+                          <span style="height: 26%"></span>
+                          <span style="height: 18%"></span>
+                        </div>
+                      </div>
+                    </div>
+                  </aside>
+
+                  <div class="viewer-shell">
+                    <div class="viewer-toolbar">
+                      <div>
+                        <div class="mini-label">Review session</div>
+                        <div class="mini-title">Worklog from build to release</div>
+                      </div>
+                      <div class="toolbar-cluster">
+                        <span class="status-chip">Capturing</span>
+                        <span class="soft-chip">Notes attached</span>
+                      </div>
+                    </div>
+                    <div class="viewer-stage">
+                      <section class="capture-frame">
+                        <div class="capture-heading">
+                          <div>
+                            <div class="capture-meta">Viewer</div>
+                            <strong>Selected frame at 4:16 PM</strong>
+                          </div>
+                          <span class="mini-copy">Prev / next navigation</span>
+                        </div>
+                        <div class="workspace-scene">
+                          <div class="scene-panel">
+                            <div class="mini-label">Code + docs</div>
+                            <div class="line-cluster blue">
+                              <span></span>
+                              <span></span>
+                              <span></span>
+                              <span></span>
+                            </div>
+                            <div class="terminal-window">
+                              <div class="terminal-line">cargo test --manifest-path src-tauri/Cargo.toml</div>
+                              <div class="terminal-line">running capture retention checks</div>
+                              <div class="terminal-line warn">release notes updated</div>
+                              <div class="terminal-line">bundle ready for Windows</div>
+                            </div>
+                          </div>
+                          <div class="right-panel-stack">
+                            <div class="stat-panel">
+                              <div class="mini-label">Notes rail</div>
+                              <div class="capture-note">
+                                Fixed storage cleanup after long-running sessions. Add changelog note before shipping.
+                              </div>
+                            </div>
+                            <div class="note-panel">
+                              <div class="mini-label">Stats</div>
+                              <div class="metric-row">
+                                <span class="metric-label">Captures</span>
+                                <span class="metric-value">178</span>
+                              </div>
+                              <div class="metric-row">
+                                <span class="metric-label">Notes</span>
+                                <span class="metric-value">12</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                        <div class="timeline-strip">
+                          <div class="timeline-heading">
+                            <span>Timeline strip</span>
+                            <small>Dense enough to scrub, light enough to scan</small>
+                          </div>
+                          <div class="thumb-grid">
+                            <div class="thumb"></div>
+                            <div class="thumb active"></div>
+                            <div class="thumb dark"></div>
+                            <div class="thumb warm"></div>
+                            <div class="thumb"></div>
+                            <div class="thumb"></div>
+                            <div class="thumb dark"></div>
+                            <div class="thumb"></div>
+                            <div class="thumb warm"></div>
+                            <div class="thumb"></div>
+                          </div>
+                        </div>
+                      </section>
+                    </div>
+                  </div>
+
+                  <aside class="side-rail right">
+                    <div class="utility-card">
+                      <div class="mini-label">Search</div>
+                      <strong>Text + note filters</strong>
+                      <div class="mini-copy">Find a moment by what was on screen or what you wrote down.</div>
+                    </div>
+                    <div class="utility-card">
+                      <div class="mini-label">Storage overview</div>
+                      <strong>2.8 / 5.0 GB</strong>
+                      <div class="progress">
+                        <span style="width: 56%"></span>
+                      </div>
+                    </div>
+                    <div class="utility-card">
+                      <div class="mini-label">Retention</div>
+                      <strong>30 days</strong>
+                      <div class="mini-copy">Cleanup runs automatically when the cap is reached.</div>
+                    </div>
+                  </aside>
+                </div>
+              </div>
+
+              <div class="mock-window showcase-window showcase-secondary" aria-hidden="true">
+                <div class="window-bar">
+                  <div class="window-dots">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                  </div>
+                  <div class="window-title">MemoryLane &bull; Theme and capture details</div>
+                  <div class="window-controls">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                  </div>
+                </div>
+                <div class="window-body showcase-body">
+                  <div class="viewer-shell">
+                    <div class="viewer-toolbar">
+                      <div>
+                        <div class="mini-label">Current theme</div>
+                        <div class="mini-title" data-theme-name-display>Amber Noir</div>
+                      </div>
+                      <span class="soft-chip">Five themes available</span>
+                    </div>
+                    <div class="viewer-stage">
+                      <section class="capture-frame">
+                        <div class="capture-heading">
+                          <div>
+                            <div class="capture-meta">Capture detail</div>
+                            <strong>Fullscreen-ready viewer</strong>
+                          </div>
+                          <span class="mini-copy">Previous &middot; Next</span>
+                        </div>
+                        <div class="workspace-scene">
+                          <div class="scene-panel">
+                            <div class="mini-label">Screen frame</div>
+                            <div class="line-cluster amber">
+                              <span></span>
+                              <span></span>
+                              <span></span>
+                              <span></span>
+                            </div>
+                            <div class="terminal-window">
+                              <div class="terminal-line" data-theme-terminal-display>Theme preview: amber-noir</div>
+                              <div class="terminal-line">Cadence: every 10 minutes</div>
+                              <div class="terminal-line">Storage cap: 5.0 GB</div>
+                              <div class="terminal-line alert">No cloud sync configured</div>
+                            </div>
+                          </div>
+                          <div class="right-panel-stack">
+                            <div class="stat-panel">
+                              <div class="mini-label">Theme selector</div>
+                              <div class="theme-swatches">
+                                <span></span>
+                                <span></span>
+                                <span></span>
+                                <span></span>
+                                <span></span>
+                              </div>
+                              <div class="mini-copy">Amber-noir, obsidian jade, arctic slate, deep plum, midnight blue.</div>
+                            </div>
+                            <div class="note-panel">
+                              <div class="capture-note-label">Per-capture note</div>
+                              <div class="capture-note">Capture taken while finishing release notes and testing timeline paging.</div>
+                            </div>
+                          </div>
+                        </div>
+                        <div class="timeline-strip">
+                          <div class="timeline-heading">
+                            <span>Review strip</span>
+                            <small>Context stays close to the screenshot</small>
+                          </div>
+                          <div class="thumb-grid">
+                            <div class="thumb warm"></div>
+                            <div class="thumb"></div>
+                            <div class="thumb active"></div>
+                            <div class="thumb dark"></div>
+                            <div class="thumb"></div>
+                            <div class="thumb warm"></div>
+                            <div class="thumb"></div>
+                            <div class="thumb dark"></div>
+                            <div class="thumb"></div>
+                            <div class="thumb"></div>
+                          </div>
+                        </div>
+                      </section>
+                    </div>
+                  </div>
+
+                  <aside class="side-rail right">
+                    <div class="utility-card">
+                      <div class="mini-label">Cadence presets</div>
+                      <strong>1, 2, 5, 10, 15, 30, 60, 120</strong>
+                      <div class="mini-copy">Or enter any custom interval between 1 minute and 4 hours.</div>
+                    </div>
+                    <div class="utility-card">
+                      <div class="mini-label">Storage path</div>
+                      <strong>%AppData%</strong>
+                      <div class="mini-copy">The archive lives on your machine, with notes and metadata beside it.</div>
+                    </div>
+                    <div class="utility-card">
+                      <div class="mini-label">Retention policy</div>
+                      <strong>Oldest days removed first</strong>
+                      <div class="mini-copy">Keeps the archive predictable instead of growing forever.</div>
+                    </div>
+                  </aside>
+                </div>
+              </div>
+            </div>
+
+            <p class="caption"><span data-theme-caption-display>The amber-noir theme.</span> Five themes available.</p>
+          </div>
+        </section>
+
+        <section class="section download-section reveal" id="download">
+          <div class="section-shell download-shell">
+            <div class="download-copy">
+              <h2>Ready when you are.</h2>
+              <p>Free to download, free to use, free forever.</p>
+            </div>
+            <!-- TODO: Replace with Windows download URL -->
+            <a class="button primary large" href="#">Download for Windows (.exe)</a>
+            <div class="download-links">
+              <!-- TODO: Replace with GitHub repository URL -->
+              <a href="#">View on GitHub</a>
+              <!-- TODO: Replace with changelog URL -->
+              <a href="#">View changelog</a>
+            </div>
+            <p class="system-line">Requires Windows 10 or 11 &middot; 64-bit &middot; ~50MB</p>
+          </div>
+        </section>
+      </main>
+
+      <footer class="site-footer">
+        <div class="footer-shell">
+          <a class="brand" href="#top" aria-label="MemoryLane home">
+            <span class="brand-mark" aria-hidden="true">
+              <svg>
+                <use href="#icon-film"></use>
+              </svg>
+            </span>
+            <span class="brand-wordmark">MemoryLane</span>
+          </a>
+          <p class="footer-note">Built by MemoryLane Contributors</p>
+          <!-- TODO: Replace with GitHub repository URL -->
+          <a class="footer-github" href="#" aria-label="MemoryLane on GitHub">
+            <svg>
+              <use href="#icon-github"></use>
+            </svg>
+          </a>
+        </div>
+      </footer>
+    </div>
+
+    <script>
+      const revealSections = document.querySelectorAll(".reveal");
+      const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const themeDefinitions = {
+        "amber-noir": {
+          name: "Amber Noir",
+          mood: "Warm, editorial, grounded.",
+          caption: "The amber-noir theme.",
+        },
+        "obsidian-jade": {
+          name: "Obsidian Jade",
+          mood: "Cool, focused, terminal-adjacent.",
+          caption: "The obsidian-jade theme.",
+        },
+        "arctic-slate": {
+          name: "Arctic Slate",
+          mood: "Clean, minimal, professional.",
+          caption: "The arctic-slate theme.",
+        },
+        "deep-plum": {
+          name: "Deep Plum",
+          mood: "Dramatic, editorial, premium dark.",
+          caption: "The deep-plum theme.",
+        },
+        "midnight-blue": {
+          name: "Midnight Blue",
+          mood: "Sleek, modern, lightly corporate.",
+          caption: "The midnight-blue theme.",
+        },
+      };
+      const themeButtons = document.querySelectorAll("[data-theme-option]");
+      const themeNameDisplays = document.querySelectorAll("[data-theme-name-display]");
+      const themeMoodDisplays = document.querySelectorAll("[data-theme-mood-display]");
+      const themeCaptionDisplays = document.querySelectorAll("[data-theme-caption-display]");
+      const themeTerminalDisplays = document.querySelectorAll("[data-theme-terminal-display]");
+
+      const applyTheme = (themeId) => {
+        const resolvedTheme = themeDefinitions[themeId] ? themeId : "amber-noir";
+        const theme = themeDefinitions[resolvedTheme];
+
+        document.body.dataset.theme = resolvedTheme;
+
+        themeButtons.forEach((button) => {
+          const isActive = button.dataset.themeOption === resolvedTheme;
+          button.classList.toggle("active", isActive);
+          button.setAttribute("aria-pressed", String(isActive));
+        });
+
+        themeNameDisplays.forEach((node) => {
+          node.textContent = theme.name;
+        });
+
+        themeMoodDisplays.forEach((node) => {
+          node.textContent = theme.mood;
+        });
+
+        themeCaptionDisplays.forEach((node) => {
+          node.textContent = theme.caption;
+        });
+
+        themeTerminalDisplays.forEach((node) => {
+          node.textContent = `Theme preview: ${resolvedTheme}`;
+        });
+      };
+
+      themeButtons.forEach((button) => {
+        button.addEventListener("click", () => {
+          applyTheme(button.dataset.themeOption);
+        });
+      });
+
+      applyTheme(document.body.dataset.theme || "amber-noir");
+
+      if (reduceMotion || !("IntersectionObserver" in window)) {
+        revealSections.forEach((section) => section.classList.add("is-visible"));
+      } else {
+        const observer = new IntersectionObserver(
+          (entries, currentObserver) => {
+            entries.forEach((entry) => {
+              if (!entry.isIntersecting) {
+                return;
+              }
+
+              entry.target.classList.add("is-visible");
+              currentObserver.unobserve(entry.target);
+            });
+          },
+          {
+            threshold: 0.18,
+            rootMargin: "0px 0px -48px 0px",
+          },
+        );
+
+        revealSections.forEach((section) => observer.observe(section));
+      }
+    </script>
+  </body>
+</html>

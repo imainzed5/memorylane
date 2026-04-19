@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "./App.css";
@@ -19,8 +19,59 @@ type CaptureRecord = {
   imagePath: string;
   thumbnailDataUrl: string;
   captureNote: string;
+  ocrText: string;
   width: number;
   height: number;
+};
+
+type RetrievalSearchResult = {
+  captureId: number;
+  dayKey: string;
+  capturedAt: string;
+  timestampLabel: string;
+  snippet: string;
+  matchReason: string;
+  score: number;
+  snippetSource: string;
+  highlightTerms: string[];
+};
+
+type DayFocusBlock = {
+  startTimestampLabel: string;
+  endTimestampLabel: string;
+  captureCount: number;
+  dominantContext: string;
+};
+
+type DayIntelligencePayload = {
+  dayKey: string;
+  summary: string;
+  focusBlocks: DayFocusBlock[];
+  changeHighlights: string[];
+  topTerms: string[];
+  generatedAt: string;
+  generationMs: number;
+};
+
+type ImportBackupPayload = {
+  captureCount: number;
+  dayCount: number;
+  restoredAt: string;
+};
+
+type PerformanceSnapshotPayload = {
+  lastSearchMs: number;
+  lastIntelligenceMs: number;
+  searchCacheHits: number;
+  intelligenceCacheHits: number;
+};
+
+type CaptureContextPagePayload = {
+  dayKey: string;
+  totalCaptures: number;
+  offset: number;
+  focusedCaptureId: number;
+  captures: CaptureRecord[];
 };
 
 type CaptureImagePayload = {
@@ -31,6 +82,17 @@ type CaptureImagePayload = {
 type CaptureHealthPayload = {
   consecutiveFailures: number;
   lastError: string | null;
+};
+
+type OcrHealthPayload = {
+  engineAvailable: boolean;
+  statusMessage: string;
+  executablePath: string | null;
+};
+
+type ReindexCapturesPayload = {
+  queuedCount: number;
+  queuedAt: string;
 };
 
 type CaptureErrorEventPayload = {
@@ -123,19 +185,30 @@ type ViewerPaneProps = {
 };
 
 type UtilityRailProps = {
+  activeRetrievalResultIndex: number;
   captureSearchQuery: string;
+  dayIntelligence: DayIntelligencePayload | null;
+  dayIntelligenceError: string | null;
+  dayIntelligenceLoading: boolean;
   intervalMinutes: number;
+  isRetrievalLoading: boolean;
   isRecording: boolean;
   nextCaptureLabel: string;
   noteDirty: boolean;
   noteDraft: string;
   noteSaveState: NoteSaveState;
+  ocrHealth: OcrHealthPayload;
+  performanceSnapshot: PerformanceSnapshotPayload;
+  retrievalError: string | null;
+  retrievalResults: RetrievalSearchResult[];
   onCaptureNow: () => void;
   onDeleteDay: () => void;
   onNoteDraftChange: (nextValue: string) => void;
   onSaveNote: () => void;
+  onSelectSearchResult: (result: RetrievalSearchResult) => void;
   onSearchQueryChange: (nextValue: string) => void;
   onTogglePause: () => void;
+  searchInputRef: MutableRefObject<HTMLInputElement | null>;
   selectedCapture: CaptureRecord | null;
   selectedDaySummary: DaySummary;
   storageStats: StorageStatsPayload;
@@ -143,12 +216,21 @@ type UtilityRailProps = {
 };
 
 type SettingsModalProps = {
+  backupImportPath: string;
+  backupPassphrase: string;
+  backupStatus: string;
   draftIntervalMinutes: number;
   draftThemeId: ThemeId;
   draftRetentionDays: number;
   draftStorageCapGb: number;
+  isBackupBusy: boolean;
+  isReindexBusy: boolean;
   isCustomInterval: boolean;
   intervalMinutes: number;
+  ocrHealth: OcrHealthPayload;
+  ocrReindexStatus: string;
+  onBackupImportPathChange: (nextValue: string) => void;
+  onBackupPassphraseChange: (nextValue: string) => void;
   onEnableCustomInterval: () => void;
   onClose: () => void;
   onDraftThemeChange: (nextValue: ThemeId) => void;
@@ -156,6 +238,9 @@ type SettingsModalProps = {
   onSelectPresetInterval: (nextValue: number) => void;
   onDraftRetentionChange: (nextValue: number) => void;
   onDraftStorageCapChange: (nextValue: number) => void;
+  onExportBackup: () => void;
+  onImportBackup: () => void;
+  onReindexAllCaptures: () => void;
   onOpenCapturesFolder: () => void;
   onResetDraft: () => void;
   onSaveSettings: () => void;
@@ -432,6 +517,67 @@ function densityMiniBars(density: number[]): number[] {
   return [values[0] ?? 0.1, values[3] ?? 0.2, values[7] ?? 0.1];
 }
 
+function renderHighlightedSnippet(snippet: string, highlightTerms: string[]): ReactNode {
+  if (!snippet || highlightTerms.length === 0) {
+    return snippet;
+  }
+
+  const normalized = snippet.toLowerCase();
+  const ranges: Array<{ start: number; end: number }> = [];
+
+  for (const term of highlightTerms) {
+    const needle = term.trim().toLowerCase();
+    if (!needle) {
+      continue;
+    }
+
+    let offset = 0;
+    while (offset < normalized.length) {
+      const index = normalized.indexOf(needle, offset);
+      if (index < 0) {
+        break;
+      }
+
+      ranges.push({ start: index, end: index + needle.length });
+      offset = index + needle.length;
+    }
+  }
+
+  if (ranges.length === 0) {
+    return snippet;
+  }
+
+  ranges.sort((left, right) => left.start - right.start || left.end - right.end);
+  const merged: Array<{ start: number; end: number }> = [];
+
+  for (const range of ranges) {
+    const previous = merged[merged.length - 1];
+    if (!previous || range.start > previous.end) {
+      merged.push({ ...range });
+    } else {
+      previous.end = Math.max(previous.end, range.end);
+    }
+  }
+
+  const segments: ReactNode[] = [];
+  let cursor = 0;
+
+  merged.forEach((range, index) => {
+    if (range.start > cursor) {
+      segments.push(<span key={`plain-${cursor}-${index}`}>{snippet.slice(cursor, range.start)}</span>);
+    }
+
+    segments.push(<mark key={`highlight-${range.start}-${range.end}`}>{snippet.slice(range.start, range.end)}</mark>);
+    cursor = range.end;
+  });
+
+  if (cursor < snippet.length) {
+    segments.push(<span key={`plain-tail-${cursor}`}>{snippet.slice(cursor)}</span>);
+  }
+
+  return <>{segments}</>;
+}
+
 function TopBar({
   hasNextDay,
   hasPreviousDay,
@@ -667,19 +813,30 @@ function ViewerPane({
 }
 
 function UtilityRail({
+  activeRetrievalResultIndex,
   captureSearchQuery,
+  dayIntelligence,
+  dayIntelligenceError,
+  dayIntelligenceLoading,
   intervalMinutes,
+  isRetrievalLoading,
   isRecording,
   nextCaptureLabel,
   noteDirty,
   noteDraft,
   noteSaveState,
+  ocrHealth,
+  performanceSnapshot,
+  retrievalError,
+  retrievalResults,
   onCaptureNow,
   onDeleteDay,
   onNoteDraftChange,
   onSaveNote,
+  onSelectSearchResult,
   onSearchQueryChange,
   onTogglePause,
+  searchInputRef,
   selectedCapture,
   selectedDaySummary,
   storageStats,
@@ -715,11 +872,70 @@ function UtilityRail({
       <section className="utility-section">
         <h3>Search Captures</h3>
         <input
+          ref={searchInputRef}
           type="text"
           value={captureSearchQuery}
-          placeholder="filter by time or keyword..."
+          placeholder="search notes, OCR, or around 3 PM yesterday..."
           onChange={(event) => onSearchQueryChange(event.currentTarget.value)}
         />
+        {!ocrHealth.engineAvailable ? <p className="storage-meta warning">{ocrHealth.statusMessage}</p> : null}
+        {captureSearchQuery.trim().length > 0 ? (
+          <>
+            <p className="storage-meta">Press `/` to focus search. Press `n` to jump through results.</p>
+            {isRetrievalLoading ? <p className="storage-meta">Searching archive...</p> : null}
+            {retrievalError ? <p className="storage-meta">{retrievalError}</p> : null}
+            {!isRetrievalLoading && !retrievalError ? (
+              retrievalResults.length > 0 ? (
+                <div className="retrieval-results" role="list" aria-label="Archive search results">
+                  {retrievalResults.map((result, index) => (
+                    <button
+                      key={result.captureId}
+                      className={index === activeRetrievalResultIndex ? "retrieval-result active" : "retrieval-result"}
+                      type="button"
+                      onClick={() => onSelectSearchResult(result)}
+                    >
+                      <strong>
+                        {formatViewerDate(result.dayKey)} · {result.timestampLabel}
+                      </strong>
+                      <span>{result.matchReason}</span>
+                      <small>{renderHighlightedSnippet(result.snippet, result.highlightTerms)}</small>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="storage-meta">No archive matches for this query yet.</p>
+              )
+            ) : null}
+          </>
+        ) : null}
+      </section>
+
+      <section className="utility-section">
+        <h3>Day Intelligence</h3>
+        {dayIntelligenceLoading ? <p className="storage-meta">Summarizing this day...</p> : null}
+        {dayIntelligenceError ? <p className="storage-meta">{dayIntelligenceError}</p> : null}
+        {!dayIntelligenceLoading && !dayIntelligenceError && dayIntelligence ? (
+          <>
+            <p className="storage-meta">{dayIntelligence.summary}</p>
+            {dayIntelligence.focusBlocks.length > 0 ? (
+              <div className="intelligence-blocks">
+                {dayIntelligence.focusBlocks.slice(0, 3).map((block) => (
+                  <article key={`${block.startTimestampLabel}-${block.endTimestampLabel}`} className="intelligence-block">
+                    <strong>
+                      {block.startTimestampLabel} - {block.endTimestampLabel}
+                    </strong>
+                    <span>
+                      {block.captureCount} captures · {block.dominantContext}
+                    </span>
+                  </article>
+                ))}
+              </div>
+            ) : null}
+            {dayIntelligence.changeHighlights.length > 0 ? (
+              <p className="storage-meta">{dayIntelligence.changeHighlights[0]}</p>
+            ) : null}
+          </>
+        ) : null}
       </section>
 
       <section className="utility-section">
@@ -765,6 +981,12 @@ function UtilityRail({
         <p className="storage-meta">
           {formatStorageValue(storageStats.usedGb)} used · {storageStats.storageCapGb.toFixed(1)} GB cap
         </p>
+        <p className="storage-meta">
+          search {performanceSnapshot.lastSearchMs}ms · intelligence {performanceSnapshot.lastIntelligenceMs}ms
+        </p>
+        <p className="storage-meta">
+          cache hits {performanceSnapshot.searchCacheHits}/{performanceSnapshot.intelligenceCacheHits}
+        </p>
       </section>
 
       <section className="utility-section">
@@ -786,12 +1008,21 @@ function UtilityRail({
 }
 
 function SettingsModal({
+  backupImportPath,
+  backupPassphrase,
+  backupStatus,
   draftIntervalMinutes,
   draftThemeId,
   draftRetentionDays,
   draftStorageCapGb,
+  isBackupBusy,
+  isReindexBusy,
   isCustomInterval,
   intervalMinutes,
+  ocrHealth,
+  ocrReindexStatus,
+  onBackupImportPathChange,
+  onBackupPassphraseChange,
   onEnableCustomInterval,
   onClose,
   onDraftThemeChange,
@@ -799,6 +1030,9 @@ function SettingsModal({
   onSelectPresetInterval,
   onDraftRetentionChange,
   onDraftStorageCapChange,
+  onExportBackup,
+  onImportBackup,
+  onReindexAllCaptures,
   onOpenCapturesFolder,
   onResetDraft,
   onSaveSettings,
@@ -1027,6 +1261,67 @@ function SettingsModal({
           <p className="path-readout">{storagePath}</p>
         </section>
 
+        <section className="settings-section">
+          <div className="settings-section-head">
+            <h4 className="settings-section-title">
+              <svg className="settings-section-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <path
+                  d="M10 3.4 4.6 5.6v3.2c0 3.5 2.3 6.7 5.4 7.8 3.1-1.1 5.4-4.3 5.4-7.8V5.6L10 3.4Z"
+                  stroke="currentColor"
+                  strokeWidth="1.4"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path d="m7.7 9.7 1.7 1.7 2.9-2.9" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              Encrypted backup
+            </h4>
+          </div>
+
+          <label className="field-block" htmlFor="backup-passphrase">
+            <span>Backup passphrase</span>
+            <input
+              id="backup-passphrase"
+              type="password"
+              value={backupPassphrase}
+              placeholder="At least 8 characters"
+              onChange={(event) => onBackupPassphraseChange(event.currentTarget.value)}
+            />
+            <p className="field-help">Used to encrypt exports and decrypt imports locally.</p>
+          </label>
+
+          <label className="field-block" htmlFor="backup-import-path">
+            <span>Import backup path (.mlbk)</span>
+            <input
+              id="backup-import-path"
+              type="text"
+              value={backupImportPath}
+              placeholder="C:/path/to/memorylane_backup_YYYYMMDD_HHMMSS.mlbk"
+              onChange={(event) => onBackupImportPathChange(event.currentTarget.value)}
+            />
+          </label>
+
+          <div className="settings-backup-actions">
+            <button className="secondary compact" type="button" onClick={onExportBackup} disabled={isBackupBusy}>
+              {isBackupBusy ? "Working..." : "Export encrypted backup"}
+            </button>
+            <button className="secondary compact" type="button" onClick={onImportBackup} disabled={isBackupBusy}>
+              {isBackupBusy ? "Working..." : "Import encrypted backup"}
+            </button>
+            <button
+              className="secondary compact"
+              type="button"
+              onClick={onReindexAllCaptures}
+              disabled={isReindexBusy || !ocrHealth.engineAvailable}
+            >
+              {isReindexBusy ? "Reindexing OCR..." : "Reindex OCR for all captures"}
+            </button>
+          </div>
+          {!ocrHealth.engineAvailable ? <p className="storage-meta warning">{ocrHealth.statusMessage}</p> : null}
+          {ocrReindexStatus ? <p className="storage-meta">{ocrReindexStatus}</p> : null}
+          {backupStatus ? <p className="storage-meta">{backupStatus}</p> : null}
+        </section>
+
         <div className="settings-footer">
           <button className="secondary" type="button" onClick={onResetDraft} disabled={!settingsDirty}>
             Reset draft
@@ -1247,7 +1542,31 @@ function App() {
     consecutiveFailures: 0,
     lastError: null,
   });
+  const [ocrHealth, setOcrHealth] = useState<OcrHealthPayload>({
+    engineAvailable: true,
+    statusMessage: "",
+    executablePath: null,
+  });
   const [captureSearchQuery, setCaptureSearchQuery] = useState<string>("");
+  const [retrievalResults, setRetrievalResults] = useState<RetrievalSearchResult[]>([]);
+  const [isRetrievalLoading, setIsRetrievalLoading] = useState<boolean>(false);
+  const [retrievalError, setRetrievalError] = useState<string | null>(null);
+  const [activeRetrievalResultIndex, setActiveRetrievalResultIndex] = useState<number>(-1);
+  const [dayIntelligence, setDayIntelligence] = useState<DayIntelligencePayload | null>(null);
+  const [isDayIntelligenceLoading, setIsDayIntelligenceLoading] = useState<boolean>(false);
+  const [dayIntelligenceError, setDayIntelligenceError] = useState<string | null>(null);
+  const [performanceSnapshot, setPerformanceSnapshot] = useState<PerformanceSnapshotPayload>({
+    lastSearchMs: 0,
+    lastIntelligenceMs: 0,
+    searchCacheHits: 0,
+    intelligenceCacheHits: 0,
+  });
+  const [backupPassphrase, setBackupPassphrase] = useState<string>("");
+  const [backupImportPath, setBackupImportPath] = useState<string>("");
+  const [backupStatus, setBackupStatus] = useState<string>("");
+  const [isBackupBusy, setIsBackupBusy] = useState<boolean>(false);
+  const [ocrReindexStatus, setOcrReindexStatus] = useState<string>("");
+  const [isOcrReindexBusy, setIsOcrReindexBusy] = useState<boolean>(false);
   const [noteDraft, setNoteDraft] = useState<string>("");
   const [noteSaveState, setNoteSaveState] = useState<NoteSaveState>("idle");
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
@@ -1257,6 +1576,7 @@ function App() {
 
   const selectedDayKeyRef = useRef(selectedDayKey);
   const timelineThumbRefs = useRef<Record<number, HTMLButtonElement | null>>({});
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const appliedThemeId = isThemeOnboardingOpen ? onboardingThemeId : themeId;
 
   useEffect(() => {
@@ -1320,10 +1640,18 @@ function App() {
   }, [selectedDayKey, summaryMap]);
 
   const normalizedSearch = captureSearchQuery.trim().toLowerCase();
+  const retrievalResultIdSet = useMemo(
+    () => new Set(retrievalResults.map((result) => result.captureId)),
+    [retrievalResults],
+  );
 
   const filteredCaptures = useMemo(() => {
     if (normalizedSearch.length === 0) {
       return captures;
+    }
+
+    if (retrievalResults.length > 0) {
+      return captures.filter((capture) => retrievalResultIdSet.has(capture.id));
     }
 
     return captures.filter((capture) => {
@@ -1333,13 +1661,14 @@ function App() {
         capture.dayKey,
         formatViewerDate(capture.dayKey),
         capture.captureNote,
+        capture.ocrText,
       ]
         .join(" ")
         .toLowerCase();
 
       return haystack.includes(normalizedSearch);
     });
-  }, [captures, normalizedSearch]);
+  }, [captures, normalizedSearch, retrievalResultIdSet, retrievalResults.length]);
 
   const selectedCapture = useMemo(
     () => filteredCaptures.find((capture) => capture.id === selectedCaptureId) ?? null,
@@ -1410,16 +1739,132 @@ function App() {
 
   const hourMarkers = useMemo(() => buildHourMarkers(filteredCaptures), [filteredCaptures]);
 
+  useEffect(() => {
+    let disposed = false;
+    const query = captureSearchQuery.trim();
+
+    if (query.length < 2) {
+      setRetrievalResults([]);
+      setRetrievalError(null);
+      setIsRetrievalLoading(false);
+      setActiveRetrievalResultIndex(-1);
+      return () => {
+        disposed = true;
+      };
+    }
+
+    setIsRetrievalLoading(true);
+    setRetrievalError(null);
+    setRetrievalResults([]);
+    setActiveRetrievalResultIndex(-1);
+
+    const timeoutId = window.setTimeout(() => {
+      const loadResults = async () => {
+        try {
+          const results = await invoke<RetrievalSearchResult[]>("search_captures", {
+            query,
+            limit: 20,
+          });
+
+          if (!disposed) {
+            setRetrievalResults(results);
+            setActiveRetrievalResultIndex(results.length > 0 ? 0 : -1);
+          }
+        } catch {
+          if (!disposed) {
+            setRetrievalError("Archive search unavailable right now.");
+          }
+        } finally {
+          if (!disposed) {
+            setIsRetrievalLoading(false);
+          }
+
+          try {
+            const snapshot = await invoke<PerformanceSnapshotPayload>("get_performance_snapshot");
+            if (!disposed) {
+              setPerformanceSnapshot(snapshot);
+            }
+          } catch {
+            // Ignore snapshot refresh errors.
+          }
+        }
+      };
+
+      void loadResults();
+    }, 180);
+
+    return () => {
+      disposed = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [captureSearchQuery]);
+
+  useEffect(() => {
+    let disposed = false;
+
+    if (!isDayKey(selectedDayKey)) {
+      setDayIntelligence(null);
+      setDayIntelligenceError(null);
+      setIsDayIntelligenceLoading(false);
+      return () => {
+        disposed = true;
+      };
+    }
+
+    setIsDayIntelligenceLoading(true);
+    setDayIntelligenceError(null);
+
+    const timeoutId = window.setTimeout(() => {
+      const loadDayIntelligence = async () => {
+        try {
+          const payload = await invoke<DayIntelligencePayload>("get_day_intelligence", {
+            dayKey: selectedDayKey,
+          });
+
+          if (!disposed) {
+            setDayIntelligence(payload);
+          }
+        } catch {
+          if (!disposed) {
+            setDayIntelligenceError("Day summary unavailable right now.");
+          }
+        } finally {
+          if (!disposed) {
+            setIsDayIntelligenceLoading(false);
+          }
+        }
+
+        try {
+          const snapshot = await invoke<PerformanceSnapshotPayload>("get_performance_snapshot");
+          if (!disposed) {
+            setPerformanceSnapshot(snapshot);
+          }
+        } catch {
+          // Ignore snapshot refresh errors.
+        }
+      };
+
+      void loadDayIntelligence();
+    }, 140);
+
+    return () => {
+      disposed = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [captures.length, selectedDayKey]);
+
   const refreshStoragePath = useCallback(async () => {
     const resolvedPath = await invoke<string>("get_storage_path");
     setStoragePath(resolvedPath);
   }, []);
 
   const refreshSettingsAndStats = useCallback(async () => {
-    const [settings, stats, health] = await Promise.all([
+    const [settings, stats, health, performance, nextOcrHealth] = await Promise.all([
       invoke<SettingsPayload>("get_settings"),
       invoke<StorageStatsPayload>("get_storage_stats"),
       invoke<CaptureHealthPayload>("get_capture_health"),
+      invoke<PerformanceSnapshotPayload>("get_performance_snapshot"),
+      invoke<OcrHealthPayload>("get_ocr_health"),
     ]);
 
     setIntervalMinutes(settings.intervalMinutes);
@@ -1434,6 +1879,8 @@ function App() {
     setIsThemeOnboardingOpen(needsThemeOnboarding);
     setStorageStats(stats);
     setCaptureHealth(health);
+    setPerformanceSnapshot(performance);
+    setOcrHealth(nextOcrHealth);
   }, []);
 
   const fetchCapturePage = useCallback(async (dayKey: string, offset: number, limit: number) => {
@@ -1730,6 +2177,38 @@ function App() {
     }
   }, [refreshAll]);
 
+  const jumpToRetrievalResult = useCallback(async (result: RetrievalSearchResult) => {
+    try {
+      const payload = await invoke<CaptureContextPagePayload>("get_capture_context_page", {
+        captureId: result.captureId,
+        pageSize: TIMELINE_PAGE_LIMIT,
+      });
+
+      setSelectedDayKey(payload.dayKey);
+      setCaptures(payload.captures);
+      setLoadedStartOffset(payload.offset);
+      setLoadedEndOffset(payload.offset + payload.captures.length);
+      setSelectedCaptureId(payload.focusedCaptureId);
+      setActionMessage(`Jumped to ${formatViewerDate(payload.dayKey)} at ${result.timestampLabel}.`);
+    } catch {
+      setActionMessage("Unable to open that search result.");
+    }
+  }, []);
+
+  const jumpThroughRetrievalResults = useCallback(
+    async (step: number) => {
+      if (retrievalResults.length === 0) {
+        return;
+      }
+
+      const baseIndex = activeRetrievalResultIndex >= 0 ? activeRetrievalResultIndex : 0;
+      const nextIndex = (baseIndex + step + retrievalResults.length) % retrievalResults.length;
+      setActiveRetrievalResultIndex(nextIndex);
+      await jumpToRetrievalResult(retrievalResults[nextIndex]);
+    },
+    [activeRetrievalResultIndex, jumpToRetrievalResult, retrievalResults],
+  );
+
   const shiftCapture = useCallback(
     (step: number) => {
       if (filteredCaptures.length === 0) {
@@ -1836,6 +2315,91 @@ function App() {
       return false;
     }
   }, [draftIntervalMinutes, draftRetentionDays, draftStorageCapGb, draftThemeId, refreshAll]);
+
+  const exportEncryptedBackup = useCallback(async () => {
+    if (backupPassphrase.trim().length < 8) {
+      setBackupStatus("Passphrase must be at least 8 characters before exporting.");
+      return;
+    }
+
+    setIsBackupBusy(true);
+    setBackupStatus("Preparing encrypted backup...");
+
+    try {
+      const path = await invoke<string>("export_encrypted_backup", {
+        passphrase: backupPassphrase,
+      });
+      setBackupStatus(`Encrypted backup exported to ${path}`);
+      setActionMessage("Encrypted backup export completed.");
+    } catch {
+      setBackupStatus("Backup export failed. Check passphrase and archive integrity.");
+      setActionMessage("Unable to export encrypted backup.");
+    } finally {
+      setIsBackupBusy(false);
+    }
+  }, [backupPassphrase]);
+
+  const importEncryptedBackup = useCallback(async () => {
+    if (backupPassphrase.trim().length < 8) {
+      setBackupStatus("Passphrase must be at least 8 characters before importing.");
+      return;
+    }
+
+    if (backupImportPath.trim().length === 0) {
+      setBackupStatus("Provide a .mlbk file path before importing.");
+      return;
+    }
+
+    setIsBackupBusy(true);
+    setBackupStatus("Decrypting and restoring backup...");
+
+    try {
+      const payload = await invoke<ImportBackupPayload>("import_encrypted_backup", {
+        backupPath: backupImportPath,
+        passphrase: backupPassphrase,
+      });
+
+      await refreshAll(selectedDayKeyRef.current);
+      setBackupStatus(
+        `Restore complete: ${payload.captureCount} captures across ${payload.dayCount} days (${formatCaptureTimestamp(payload.restoredAt)}).`,
+      );
+      setActionMessage("Encrypted backup restored and timeline refreshed.");
+    } catch {
+      setBackupStatus("Backup import failed. Verify file path and passphrase.");
+      setActionMessage("Unable to import encrypted backup.");
+    } finally {
+      setIsBackupBusy(false);
+    }
+  }, [backupImportPath, backupPassphrase, refreshAll]);
+
+  const reindexAllCaptures = useCallback(async () => {
+    if (isOcrReindexBusy) {
+      return;
+    }
+
+    setIsOcrReindexBusy(true);
+    setOcrReindexStatus("Queueing OCR reindex job...");
+
+    try {
+      const payload = await invoke<ReindexCapturesPayload>("reindex_all_captures");
+      setOcrReindexStatus(
+        `Queued OCR reindex for ${payload.queuedCount} capture(s) at ${formatCaptureTimestamp(payload.queuedAt)}.`,
+      );
+      setActionMessage(`Queued OCR reindex for ${payload.queuedCount} capture(s).`);
+      await refreshSettingsAndStats();
+    } catch {
+      setOcrReindexStatus("Unable to start OCR reindex. Install Tesseract and retry.");
+      setActionMessage("Unable to start OCR reindex.");
+      try {
+        const nextOcrHealth = await invoke<OcrHealthPayload>("get_ocr_health");
+        setOcrHealth(nextOcrHealth);
+      } catch {
+        // Ignore OCR health refresh errors.
+      }
+    } finally {
+      setIsOcrReindexBusy(false);
+    }
+  }, [isOcrReindexBusy, refreshSettingsAndStats]);
 
   const resetSettingsDraft = useCallback(() => {
     setDraftIntervalMinutes(intervalMinutes);
@@ -2017,6 +2581,25 @@ function App() {
       }
 
       switch (event.key) {
+        case "/":
+          event.preventDefault();
+          searchInputRef.current?.focus();
+          searchInputRef.current?.select();
+          return;
+        case "Escape":
+          if (captureSearchQuery.trim().length > 0) {
+            event.preventDefault();
+            setCaptureSearchQuery("");
+            setActionMessage("Cleared search query.");
+          }
+          return;
+        case "n":
+        case "N":
+          if (captureSearchQuery.trim().length > 0 && retrievalResults.length > 0) {
+            event.preventDefault();
+            void jumpThroughRetrievalResults(event.shiftKey ? -1 : 1);
+          }
+          return;
         case "ArrowLeft":
           event.preventDefault();
           shiftCapture(-1);
@@ -2087,7 +2670,9 @@ function App() {
       window.removeEventListener("keydown", onKeyDown);
     };
   }, [
+    captureSearchQuery,
     deleteSelectedCapture,
+    jumpThroughRetrievalResults,
     jumpToFirstCapture,
     jumpToNow,
     jumpToToday,
@@ -2098,6 +2683,7 @@ function App() {
     shiftDay,
     isThemeOnboardingOpen,
     isSettingsOpen,
+    retrievalResults.length,
     toggleFullscreen,
     togglePauseResume,
     triggerCaptureNow,
@@ -2156,19 +2742,36 @@ function App() {
         />
 
         <UtilityRail
+          activeRetrievalResultIndex={activeRetrievalResultIndex}
           captureSearchQuery={captureSearchQuery}
+          dayIntelligence={dayIntelligence}
+          dayIntelligenceError={dayIntelligenceError}
+          dayIntelligenceLoading={isDayIntelligenceLoading}
           intervalMinutes={intervalMinutes}
+          isRetrievalLoading={isRetrievalLoading}
           isRecording={isRecording}
           nextCaptureLabel={nextCaptureLabel}
           noteDirty={noteDirty}
           noteDraft={noteDraft}
           noteSaveState={noteSaveState}
+          ocrHealth={ocrHealth}
+          performanceSnapshot={performanceSnapshot}
+          retrievalError={retrievalError}
+          retrievalResults={retrievalResults}
           onCaptureNow={() => void triggerCaptureNow()}
           onDeleteDay={() => void deleteSelectedDay()}
           onNoteDraftChange={setNoteDraft}
           onSaveNote={() => void saveCaptureNote()}
+          onSelectSearchResult={(result) => {
+            const resultIndex = retrievalResults.findIndex((item) => item.captureId === result.captureId);
+            if (resultIndex >= 0) {
+              setActiveRetrievalResultIndex(resultIndex);
+            }
+            void jumpToRetrievalResult(result);
+          }}
           onSearchQueryChange={setCaptureSearchQuery}
           onTogglePause={() => void togglePauseResume()}
+          searchInputRef={searchInputRef}
           selectedCapture={selectedCapture}
           selectedDaySummary={selectedDaySummary}
           storageStats={storageStats}
@@ -2205,12 +2808,21 @@ function App() {
 
       {isSettingsOpen ? (
         <SettingsModal
+          backupImportPath={backupImportPath}
+          backupPassphrase={backupPassphrase}
+          backupStatus={backupStatus}
           draftIntervalMinutes={draftIntervalMinutes}
           draftThemeId={draftThemeId}
           draftRetentionDays={draftRetentionDays}
           draftStorageCapGb={draftStorageCapGb}
+          isBackupBusy={isBackupBusy}
+          isReindexBusy={isOcrReindexBusy}
           isCustomInterval={isDraftIntervalCustom}
           intervalMinutes={intervalMinutes}
+          ocrHealth={ocrHealth}
+          ocrReindexStatus={ocrReindexStatus}
+          onBackupImportPathChange={setBackupImportPath}
+          onBackupPassphraseChange={setBackupPassphrase}
           onEnableCustomInterval={() => setIsDraftIntervalCustom(true)}
           onClose={() => setIsSettingsOpen(false)}
           onDraftThemeChange={setDraftThemeId}
@@ -2224,6 +2836,9 @@ function App() {
           }}
           onDraftRetentionChange={setDraftRetentionDays}
           onDraftStorageCapChange={setDraftStorageCapGb}
+          onExportBackup={() => void exportEncryptedBackup()}
+          onImportBackup={() => void importEncryptedBackup()}
+          onReindexAllCaptures={() => void reindexAllCaptures()}
           onOpenCapturesFolder={() => void openCapturesFolder()}
           onResetDraft={resetSettingsDraft}
           onSaveSettings={() => void saveSettingsFromModal()}

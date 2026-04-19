@@ -706,6 +706,10 @@ button {
   margin: 0;
 }
 
+.storage-meta.warning {
+  color: var(--warning-text);
+}
+
 .section-row {
   display: flex;
   justify-content: space-between;
@@ -727,6 +731,85 @@ button {
 
 .recording-row span {
   font-size: 12px;
+  color: var(--text-muted);
+}
+
+.retrieval-results {
+  display: grid;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.retrieval-result {
+  display: grid;
+  gap: 2px;
+  text-align: left;
+  padding: 8px;
+  border-radius: 10px;
+  border: 1px solid var(--line-soft);
+  background: var(--bg-panel-soft);
+  cursor: pointer;
+}
+
+.retrieval-result:hover,
+.retrieval-result:focus-visible {
+  border-color: var(--line-strong);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+}
+
+.retrieval-result.active {
+  border-color: var(--day-entry-selected-border);
+  box-shadow: inset 0 0 0 1px var(--day-entry-selected-border);
+  background: var(--day-entry-selected-bg);
+}
+
+.retrieval-result strong {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.retrieval-result span {
+  font-size: 11px;
+  color: var(--accent-amber);
+}
+
+.retrieval-result small {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.retrieval-result small mark {
+  padding: 0 2px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent-amber) 32%, transparent);
+  color: var(--text-primary);
+}
+
+.intelligence-blocks {
+  display: grid;
+  gap: 6px;
+}
+
+.intelligence-block {
+  display: grid;
+  gap: 3px;
+  padding: 7px 8px;
+  border-radius: 9px;
+  border: 1px solid var(--line-soft);
+  background: color-mix(in srgb, var(--bg-panel-soft) 72%, transparent);
+}
+
+.intelligence-block strong {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.intelligence-block span {
+  font-size: 11px;
   color: var(--text-muted);
 }
 
@@ -1217,6 +1300,12 @@ textarea::placeholder {
   font-size: 12px;
   color: var(--text-muted);
   overflow-wrap: anywhere;
+}
+
+.settings-backup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .settings-footer {
