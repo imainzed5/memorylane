@@ -36,6 +36,13 @@ The desktop bundle is written to `src-tauri/target/release/bundle`.
 The landing page is available separately at `public/landing.html`; the packaged exe opens the app shell from `index.html`.
 For the optional OCR installer component in NSIS builds, place `tesseract-installer.exe` in `src-tauri/resources/tesseract/` before packaging.
 
+## GitHub Releases
+
+1. Create a version tag, for example: `git tag v0.1.0`
+2. Push the tag to GitHub: `git push origin v0.1.0`
+3. The release workflow builds the Windows installers and publishes them to GitHub Releases for that tag.
+4. You can also run the workflow manually from the GitHub Actions tab by supplying an existing tag name.
+
 ## Keyboard Shortcuts
 
 - `Left` / `Right`: previous or next capture in the selected day.

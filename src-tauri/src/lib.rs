@@ -23,7 +23,16 @@ use sha2::Sha256;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State, WindowEvent};
-use tauri_plugin_notification::NotificationExt;
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::Foundation::CloseHandle;
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::System::Threading::{
+    OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
+};
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    GetForegroundWindow, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
+};
 
 const DB_FILENAME: &str = "memorylane.db";
 const DEFAULT_INTERVAL_MINUTES: i64 = 2;
@@ -119,6 +128,8 @@ struct DayCapturePayload {
     thumbnail_data_url: String,
     capture_note: String,
     ocr_text: String,
+    window_title: String,
+    process_name: String,
     width: i64,
     height: i64,
 }
@@ -132,9 +143,16 @@ struct RetrievalSearchResultPayload {
     timestamp_label: String,
     snippet: String,
     match_reason: String,
+    match_sources: Vec<String>,
     score: f64,
     snippet_source: String,
     highlight_terms: Vec<String>,
+}
+
+#[derive(Clone, Default)]
+struct WindowContextMetadata {
+    window_title: String,
+    process_name: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -235,6 +253,10 @@ struct EncryptedBackupCapture {
     day_key: String,
     captured_at: String,
     capture_note: String,
+    #[serde(default)]
+    window_title: String,
+    #[serde(default)]
+    process_name: String,
     width: i64,
     height: i64,
     relative_image_path: String,
@@ -505,6 +527,16 @@ fn initialize_database(conn: &Connection) -> Result<(), String> {
         [],
     );
 
+    // Support existing databases created before window/process metadata columns were introduced.
+    let _ = conn.execute(
+        "ALTER TABLE captures ADD COLUMN window_title TEXT NOT NULL DEFAULT ''",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE captures ADD COLUMN process_name TEXT NOT NULL DEFAULT ''",
+        [],
+    );
+
     // Support existing databases created before capture search indexing was introduced.
     let _ = conn.execute(
         "ALTER TABLE capture_search_index ADD COLUMN ocr_text TEXT NOT NULL DEFAULT ''",
@@ -557,7 +589,15 @@ fn initialize_database(conn: &Connection) -> Result<(), String> {
     conn.execute(
         "
         INSERT INTO capture_search_index (capture_id, ocr_text, search_text, ocr_status)
-        SELECT captures.id, '', lower(trim(captures.capture_note)), 'pending'
+        SELECT
+            captures.id,
+            '',
+            lower(
+                trim(
+                    captures.capture_note || ' ' || captures.window_title || ' ' || captures.process_name
+                )
+            ),
+            'pending'
         FROM captures
         WHERE NOT EXISTS (
             SELECT 1
@@ -1000,16 +1040,92 @@ fn to_timestamp_label(captured_at: &str) -> String {
         .unwrap_or_else(|_| captured_at.to_string())
 }
 
+#[cfg(target_os = "windows")]
+fn capture_foreground_window_metadata() -> WindowContextMetadata {
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd.is_null() {
+            return WindowContextMetadata::default();
+        }
+
+        let title_length = GetWindowTextLengthW(hwnd);
+        let window_title = if title_length > 0 {
+            let mut buffer = vec![0_u16; (title_length as usize) + 1];
+            let copied = GetWindowTextW(hwnd, buffer.as_mut_ptr(), buffer.len() as i32);
+            if copied > 0 {
+                collapse_whitespace(
+                    &String::from_utf16_lossy(&buffer[..copied as usize])
+                        .trim()
+                        .to_string(),
+                )
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        };
+
+        let mut process_id: u32 = 0;
+        GetWindowThreadProcessId(hwnd, &mut process_id);
+
+        let process_name = if process_id > 0 {
+            let process_handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id);
+            if !process_handle.is_null() {
+                let mut path_buffer = vec![0_u16; 2048];
+                let mut path_length: u32 = path_buffer.len() as u32;
+                let resolved = QueryFullProcessImageNameW(
+                    process_handle,
+                    0,
+                    path_buffer.as_mut_ptr(),
+                    &mut path_length,
+                );
+                let _ = CloseHandle(process_handle);
+
+                if resolved != 0 && path_length > 0 {
+                    let full_path = String::from_utf16_lossy(&path_buffer[..path_length as usize]);
+                    let file_name = Path::new(&full_path)
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or(full_path.as_str());
+                    collapse_whitespace(file_name)
+                } else {
+                    String::new()
+                }
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        };
+
+        WindowContextMetadata {
+            window_title,
+            process_name,
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn capture_foreground_window_metadata() -> WindowContextMetadata {
+    WindowContextMetadata::default()
+}
+
 fn refresh_capture_search_index(
     conn: &Connection,
     capture_id: i64,
     capture_note: &str,
     ocr_text: &str,
+    window_title: &str,
+    process_name: &str,
     ocr_status: &str,
     ocr_error: Option<&str>,
     indexed_at: Option<&str>,
 ) -> Result<(), String> {
-    let search_text = collapse_whitespace(&format!("{} {}", capture_note, ocr_text)).to_ascii_lowercase();
+    let search_text = collapse_whitespace(&format!(
+        "{} {} {} {}",
+        capture_note, ocr_text, window_title, process_name
+    ))
+    .to_ascii_lowercase();
 
     conn.execute(
         "
@@ -1158,11 +1274,18 @@ fn extract_ocr_text_from_image(image_path: &str) -> Result<String, String> {
 }
 
 fn run_capture_index_job(state: &SharedState, capture_id: i64) -> Result<(), String> {
-    let (capture_note, image_path) = with_connection(state, |conn| {
+    let (capture_note, image_path, window_title, process_name) = with_connection(state, |conn| {
         conn.query_row(
-            "SELECT capture_note, image_path FROM captures WHERE id = ?",
+            "SELECT capture_note, image_path, window_title, process_name FROM captures WHERE id = ?",
             params![capture_id],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            },
         )
         .map_err(|error| format!("failed to load capture row for indexing: {error}"))
     })?;
@@ -1174,6 +1297,8 @@ fn run_capture_index_job(state: &SharedState, capture_id: i64) -> Result<(), Str
             capture_id,
             &capture_note,
             "",
+            &window_title,
+            &process_name,
             "processing",
             None,
             Some(&processing_at),
@@ -1191,6 +1316,8 @@ fn run_capture_index_job(state: &SharedState, capture_id: i64) -> Result<(), Str
                     capture_id,
                     &capture_note,
                     &ocr_text,
+                    &window_title,
+                    &process_name,
                     "ready",
                     None,
                     Some(&indexed_at),
@@ -1207,6 +1334,8 @@ fn run_capture_index_job(state: &SharedState, capture_id: i64) -> Result<(), Str
                     capture_id,
                     &capture_note,
                     "",
+                    &window_title,
+                    &process_name,
                     "error",
                     Some(&error),
                     Some(&indexed_at),
@@ -1302,11 +1431,15 @@ fn build_context_snippet(text: &str, match_start: usize, match_len: usize) -> St
 fn build_retrieval_snippet(
     note: &str,
     ocr_text: &str,
+    window_title: &str,
+    process_name: &str,
     query_parts: &RetrievalQueryParts,
     fallback_reason: &str,
 ) -> IndexedTextBundle {
     let note_lower = note.to_ascii_lowercase();
     let ocr_lower = ocr_text.to_ascii_lowercase();
+    let window_lower = window_title.to_ascii_lowercase();
+    let process_lower = process_name.to_ascii_lowercase();
 
     let mut probes = query_parts.phrases.clone();
     probes.extend(query_parts.terms.clone());
@@ -1329,6 +1462,24 @@ fn build_retrieval_snippet(
                 highlight_terms: vec![probe.to_string()],
             };
         }
+
+        if let Some(index) = window_lower.find(probe) {
+            let snippet = build_context_snippet(window_title, index, probe.len());
+            return IndexedTextBundle {
+                snippet: format!("Window: {snippet}"),
+                source: "window".to_string(),
+                highlight_terms: vec![probe.to_string()],
+            };
+        }
+
+        if let Some(index) = process_lower.find(probe) {
+            let snippet = build_context_snippet(process_name, index, probe.len());
+            return IndexedTextBundle {
+                snippet: format!("App: {snippet}"),
+                source: "window".to_string(),
+                highlight_terms: vec![probe.to_string()],
+            };
+        }
     }
 
     if !note.trim().is_empty() {
@@ -1344,6 +1495,22 @@ fn build_retrieval_snippet(
         return IndexedTextBundle {
             snippet: format!("OCR: {}", collapse_whitespace(&shortened)),
             source: "ocr".to_string(),
+            highlight_terms: Vec::new(),
+        };
+    }
+
+    if !window_title.trim().is_empty() {
+        return IndexedTextBundle {
+            snippet: format!("Window: {}", collapse_whitespace(window_title)),
+            source: "window".to_string(),
+            highlight_terms: Vec::new(),
+        };
+    }
+
+    if !process_name.trim().is_empty() {
+        return IndexedTextBundle {
+            snippet: format!("App: {}", collapse_whitespace(process_name)),
+            source: "window".to_string(),
             highlight_terms: Vec::new(),
         };
     }
@@ -1556,18 +1723,37 @@ fn build_day_intelligence_payload(
         change_highlights.push("Single focus block detected for this day.".to_string());
     }
 
-    let summary = if let Some(primary) = top_term_labels.first() {
+    let first_label = rows
+        .first()
+        .map(|row| to_timestamp_label(&row.0))
+        .unwrap_or_else(|| "unknown".to_string());
+    let last_label = rows
+        .last()
+        .map(|row| to_timestamp_label(&row.0))
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let summary = if top_term_labels.is_empty() {
         format!(
-            "{} captures grouped into {} focus block(s). Dominant context: {}.",
+            "{} captures between {} and {} across {} focus block(s).",
             rows.len(),
-            focus_blocks.len(),
-            primary
+            first_label,
+            last_label,
+            focus_blocks.len()
         )
     } else {
+        let themes = top_term_labels
+            .iter()
+            .take(3)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
         format!(
-            "{} captures grouped into {} focus block(s).",
+            "{} captures between {} and {} across {} focus block(s). Top themes: {}.",
             rows.len(),
-            focus_blocks.len()
+            first_label,
+            last_label,
+            focus_blocks.len(),
+            themes
         )
     };
 
@@ -1893,6 +2079,9 @@ fn capture_once(state: &SharedState) -> Result<(), String> {
 
     let now = Local::now();
     let day_key = now.format("%Y-%m-%d").to_string();
+    let window_context = capture_foreground_window_metadata();
+    let window_title = window_context.window_title;
+    let process_name = window_context.process_name;
     let day_dir = state.capture_dir.join(&day_key);
 
     fs::create_dir_all(&day_dir)
@@ -1927,8 +2116,18 @@ fn capture_once(state: &SharedState) -> Result<(), String> {
     let capture_id = with_connection(state, |conn| {
         conn.execute(
             "
-            INSERT INTO captures (day_key, captured_at, image_path, thumbnail_path, capture_note, width, height)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO captures (
+                day_key,
+                captured_at,
+                image_path,
+                thumbnail_path,
+                capture_note,
+                window_title,
+                process_name,
+                width,
+                height
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ",
             params![
                 day_key,
@@ -1936,6 +2135,8 @@ fn capture_once(state: &SharedState) -> Result<(), String> {
                 image_path.to_string_lossy().to_string(),
                 thumbnail_path.to_string_lossy().to_string(),
                 "",
+                window_title,
+                process_name,
                 screenshot.width() as i64,
                 screenshot.height() as i64
             ],
@@ -1943,7 +2144,17 @@ fn capture_once(state: &SharedState) -> Result<(), String> {
         .map_err(|error| format!("failed to persist capture metadata: {error}"))?;
 
         let inserted_capture_id = conn.last_insert_rowid();
-        refresh_capture_search_index(conn, inserted_capture_id, "", "", "pending", None, None)?;
+        refresh_capture_search_index(
+            conn,
+            inserted_capture_id,
+            "",
+            "",
+            &window_title,
+            &process_name,
+            "pending",
+            None,
+            None,
+        )?;
 
         Ok(inserted_capture_id)
     })?;
@@ -1963,15 +2174,6 @@ fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
         let _ = window.unminimize();
         let _ = window.set_focus();
     }
-}
-
-fn show_minimized_to_tray_notification<R: Runtime>(app: &AppHandle<R>) {
-    let _ = app
-        .notification()
-        .builder()
-        .title("MemoryLane")
-        .body("Minimized to tray. Click the tray icon to reopen.")
-        .show();
 }
 
 fn set_pause_internal(state: &SharedState, is_paused: bool) -> Result<(), String> {
@@ -2324,6 +2526,8 @@ fn load_day_captures_page(
                     captures.image_path,
                     captures.thumbnail_path,
                     captures.capture_note,
+                    captures.window_title,
+                    captures.process_name,
                     captures.width,
                     captures.height,
                     COALESCE(capture_search_index.ocr_text, '')
@@ -2345,9 +2549,11 @@ fn load_day_captures_page(
                     row.get::<_, String>(3)?,
                     row.get::<_, String>(4)?,
                     row.get::<_, String>(5)?,
-                    row.get::<_, i64>(6)?,
-                    row.get::<_, i64>(7)?,
-                    row.get::<_, String>(8)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
+                    row.get::<_, i64>(8)?,
+                    row.get::<_, i64>(9)?,
+                    row.get::<_, String>(10)?,
                 ))
             })
             .map_err(|error| format!("failed to run day captures query: {error}"))?;
@@ -2355,8 +2561,19 @@ fn load_day_captures_page(
         let mut capture_rows = Vec::new();
 
         for row in rows {
-            let (id, row_day_key, captured_at, image_path, thumbnail_path, capture_note, width, height, ocr_text) =
-                row.map_err(|error| format!("failed to read capture row: {error}"))?;
+            let (
+                id,
+                row_day_key,
+                captured_at,
+                image_path,
+                thumbnail_path,
+                capture_note,
+                window_title,
+                process_name,
+                width,
+                height,
+                ocr_text,
+            ) = row.map_err(|error| format!("failed to read capture row: {error}"))?;
 
             capture_rows.push((
                 id,
@@ -2365,6 +2582,8 @@ fn load_day_captures_page(
                 image_path,
                 thumbnail_path,
                 capture_note,
+                window_title,
+                process_name,
                 width,
                 height,
                 ocr_text,
@@ -2376,7 +2595,20 @@ fn load_day_captures_page(
 
     let mut captures = Vec::new();
 
-    for (id, row_day_key, captured_at, image_path, thumbnail_path, capture_note, width, height, ocr_text) in rows {
+    for (
+        id,
+        row_day_key,
+        captured_at,
+        image_path,
+        thumbnail_path,
+        capture_note,
+        window_title,
+        process_name,
+        width,
+        height,
+        ocr_text,
+    ) in rows
+    {
         let timestamp_label = to_timestamp_label(&captured_at);
 
         captures.push(DayCapturePayload {
@@ -2388,6 +2620,8 @@ fn load_day_captures_page(
             thumbnail_data_url: load_image_data_url(&thumbnail_path)?,
             capture_note,
             ocr_text,
+            window_title,
+            process_name,
             width,
             height,
         });
@@ -2435,7 +2669,14 @@ fn search_captures(
     let rows = with_connection(&state, |conn| {
         let sql = if time_hint.day_key.is_some() {
             "
-            SELECT captures.id, captures.day_key, captures.captured_at, captures.capture_note, COALESCE(capture_search_index.ocr_text, '')
+            SELECT
+                captures.id,
+                captures.day_key,
+                captures.captured_at,
+                captures.capture_note,
+                captures.window_title,
+                captures.process_name,
+                COALESCE(capture_search_index.ocr_text, '')
             FROM captures
             LEFT JOIN capture_search_index ON capture_search_index.capture_id = captures.id
             WHERE captures.day_key = ?
@@ -2444,7 +2685,14 @@ fn search_captures(
             "
         } else {
             "
-            SELECT captures.id, captures.day_key, captures.captured_at, captures.capture_note, COALESCE(capture_search_index.ocr_text, '')
+            SELECT
+                captures.id,
+                captures.day_key,
+                captures.captured_at,
+                captures.capture_note,
+                captures.window_title,
+                captures.process_name,
+                COALESCE(capture_search_index.ocr_text, '')
             FROM captures
             LEFT JOIN capture_search_index ON capture_search_index.capture_id = captures.id
             ORDER BY captures.captured_at DESC
@@ -2467,6 +2715,8 @@ fn search_captures(
                         row.get::<_, String>(2)?,
                         row.get::<_, String>(3)?,
                         row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                        row.get::<_, String>(6)?,
                     ))
                 })
                 .map_err(|error| format!("failed to execute day-constrained capture search: {error}"))?;
@@ -2483,6 +2733,8 @@ fn search_captures(
                         row.get::<_, String>(2)?,
                         row.get::<_, String>(3)?,
                         row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                        row.get::<_, String>(6)?,
                     ))
                 })
                 .map_err(|error| format!("failed to execute capture search: {error}"))?;
@@ -2497,9 +2749,11 @@ fn search_captures(
 
     let mut results = Vec::<RetrievalSearchResultPayload>::new();
 
-    for (capture_id, day_key, captured_at, capture_note, ocr_text) in rows {
+    for (capture_id, day_key, captured_at, capture_note, window_title, process_name, ocr_text) in rows {
         let note_lower = capture_note.to_ascii_lowercase();
         let ocr_lower = ocr_text.to_ascii_lowercase();
+        let window_lower = window_title.to_ascii_lowercase();
+        let process_lower = process_name.to_ascii_lowercase();
         let mut score = 0.0;
         let mut reasons = Vec::<String>::new();
         let mut highlight_terms = HashSet::<String>::new();
@@ -2514,6 +2768,16 @@ fn search_captures(
             .iter()
             .filter(|phrase| ocr_lower.contains(phrase.as_str()))
             .count() as i64;
+        let window_phrase_hits = query_parts
+            .phrases
+            .iter()
+            .filter(|phrase| window_lower.contains(phrase.as_str()))
+            .count() as i64;
+        let process_phrase_hits = query_parts
+            .phrases
+            .iter()
+            .filter(|phrase| process_lower.contains(phrase.as_str()))
+            .count() as i64;
         let note_term_hits = query_parts
             .terms
             .iter()
@@ -2524,7 +2788,24 @@ fn search_captures(
             .iter()
             .filter(|term| ocr_lower.contains(term.as_str()))
             .count() as i64;
-        let total_text_hits = note_phrase_hits + ocr_phrase_hits + note_term_hits + ocr_term_hits;
+        let window_term_hits = query_parts
+            .terms
+            .iter()
+            .filter(|term| window_lower.contains(term.as_str()))
+            .count() as i64;
+        let process_term_hits = query_parts
+            .terms
+            .iter()
+            .filter(|term| process_lower.contains(term.as_str()))
+            .count() as i64;
+        let total_text_hits = note_phrase_hits
+            + ocr_phrase_hits
+            + window_phrase_hits
+            + process_phrase_hits
+            + note_term_hits
+            + ocr_term_hits
+            + window_term_hits
+            + process_term_hits;
 
         if has_text_query {
             if total_text_hits == 0 && time_hint.target_minutes.is_none() {
@@ -2533,20 +2814,29 @@ fn search_captures(
 
             score += (note_phrase_hits as f64) * 8.0;
             score += (ocr_phrase_hits as f64) * 6.2;
+            score += (window_phrase_hits as f64) * 4.8;
+            score += (process_phrase_hits as f64) * 4.1;
             score += (note_term_hits as f64) * 2.8;
             score += (ocr_term_hits as f64) * 1.9;
+            score += (window_term_hits as f64) * 1.6;
+            score += (process_term_hits as f64) * 1.3;
             score += lexical_density_score(&note_lower, &query_parts) * 1.6;
             score += lexical_density_score(&ocr_lower, &query_parts) * 1.1;
+            score += lexical_density_score(&window_lower, &query_parts) * 0.9;
+            score += lexical_density_score(&process_lower, &query_parts) * 0.7;
 
             if !query_parts.phrases.is_empty()
-                && (note_phrase_hits + ocr_phrase_hits) as usize >= query_parts.phrases.len()
+                && (note_phrase_hits + ocr_phrase_hits + window_phrase_hits + process_phrase_hits)
+                    as usize
+                    >= query_parts.phrases.len()
             {
                 score += 2.4;
                 reasons.push("exact phrase".to_string());
             }
 
             if !query_parts.terms.is_empty()
-                && (note_term_hits + ocr_term_hits) as usize >= query_parts.terms.len()
+                && (note_term_hits + ocr_term_hits + window_term_hits + process_term_hits) as usize
+                    >= query_parts.terms.len()
             {
                 score += 1.6;
                 reasons.push("all terms".to_string());
@@ -2560,10 +2850,20 @@ fn search_captures(
                 reasons.push("ocr".to_string());
             }
 
+            if window_phrase_hits + process_phrase_hits + window_term_hits + process_term_hits > 0 {
+                reasons.push("window".to_string());
+            }
+
             for token in collect_matched_tokens(&note_lower, &query_parts) {
                 highlight_terms.insert(token);
             }
             for token in collect_matched_tokens(&ocr_lower, &query_parts) {
+                highlight_terms.insert(token);
+            }
+            for token in collect_matched_tokens(&window_lower, &query_parts) {
+                highlight_terms.insert(token);
+            }
+            for token in collect_matched_tokens(&process_lower, &query_parts) {
                 highlight_terms.insert(token);
             }
         }
@@ -2613,6 +2913,8 @@ fn search_captures(
         let snippet_bundle = build_retrieval_snippet(
             &capture_note,
             &ocr_text,
+            &window_title,
+            &process_name,
             &query_parts,
             "Matched by capture metadata.",
         );
@@ -2623,6 +2925,7 @@ fn search_captures(
 
         let mut highlight_terms = highlight_terms.into_iter().collect::<Vec<_>>();
         highlight_terms.sort_by(|left, right| right.len().cmp(&left.len()).then_with(|| left.cmp(right)));
+        let match_sources = reasons.clone();
 
         results.push(RetrievalSearchResultPayload {
             capture_id,
@@ -2630,7 +2933,8 @@ fn search_captures(
             captured_at: captured_at.clone(),
             timestamp_label: to_timestamp_label(&captured_at),
             snippet: snippet_bundle.snippet,
-            match_reason: reasons.join(" + "),
+            match_reason: reasons.join(" · "),
+            match_sources,
             score,
             snippet_source: snippet_bundle.source,
             highlight_terms,
@@ -2758,6 +3062,8 @@ fn export_encrypted_backup(state: State<SharedState>, passphrase: String) -> Res
                     captures.image_path,
                     captures.thumbnail_path,
                     captures.capture_note,
+                    captures.window_title,
+                    captures.process_name,
                     captures.width,
                     captures.height,
                     COALESCE(capture_search_index.ocr_text, ''),
@@ -2781,13 +3087,15 @@ fn export_encrypted_backup(state: State<SharedState>, passphrase: String) -> Res
                     row.get::<_, String>(3)?,
                     row.get::<_, String>(4)?,
                     row.get::<_, String>(5)?,
-                    row.get::<_, i64>(6)?,
-                    row.get::<_, i64>(7)?,
-                    row.get::<_, String>(8)?,
-                    row.get::<_, String>(9)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
+                    row.get::<_, i64>(8)?,
+                    row.get::<_, i64>(9)?,
                     row.get::<_, String>(10)?,
-                    row.get::<_, Option<String>>(11)?,
-                    row.get::<_, Option<String>>(12)?,
+                    row.get::<_, String>(11)?,
+                    row.get::<_, String>(12)?,
+                    row.get::<_, Option<String>>(13)?,
+                    row.get::<_, Option<String>>(14)?,
                 ))
             })
             .map_err(|error| format!("failed to run encrypted backup query: {error}"))?;
@@ -2810,6 +3118,8 @@ fn export_encrypted_backup(state: State<SharedState>, passphrase: String) -> Res
                 image_path,
                 thumbnail_path,
                 capture_note,
+                window_title,
+                process_name,
                 width,
                 height,
                 ocr_text,
@@ -2832,6 +3142,8 @@ fn export_encrypted_backup(state: State<SharedState>, passphrase: String) -> Res
                     day_key: day_key.clone(),
                     captured_at,
                     capture_note,
+                    window_title,
+                    process_name,
                     width,
                     height,
                     relative_image_path: relative_capture_path(
@@ -3000,8 +3312,19 @@ fn import_encrypted_backup(
             transaction
                 .execute(
                     "
-                    INSERT INTO captures (id, day_key, captured_at, image_path, thumbnail_path, capture_note, width, height)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO captures (
+                        id,
+                        day_key,
+                        captured_at,
+                        image_path,
+                        thumbnail_path,
+                        capture_note,
+                        window_title,
+                        process_name,
+                        width,
+                        height
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ",
                     params![
                         capture.id,
@@ -3010,6 +3333,8 @@ fn import_encrypted_backup(
                         image_path,
                         thumbnail_path,
                         capture.capture_note,
+                        capture.window_title,
+                        capture.process_name,
                         capture.width,
                         capture.height,
                     ],
@@ -3174,12 +3499,23 @@ fn update_capture_note(
 
         let (ocr_text, ocr_status) =
             index_snapshot.unwrap_or_else(|| (String::new(), "pending".to_string()));
+
+        let (window_title, process_name) = conn
+            .query_row(
+                "SELECT window_title, process_name FROM captures WHERE id = ?",
+                params![capture_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .map_err(|error| format!("failed to read capture metadata for note update: {error}"))?;
+
         let indexed_at = Local::now().to_rfc3339();
         refresh_capture_search_index(
             conn,
             capture_id,
             &note,
             &ocr_text,
+            &window_title,
+            &process_name,
             &ocr_status,
             None,
             Some(&indexed_at),
@@ -3238,7 +3574,15 @@ fn reindex_all_captures(
         conn.execute(
             "
             INSERT INTO capture_search_index (capture_id, ocr_text, search_text, ocr_status)
-            SELECT captures.id, '', lower(trim(captures.capture_note)), 'pending'
+            SELECT
+                captures.id,
+                '',
+                lower(
+                    trim(
+                        captures.capture_note || ' ' || captures.window_title || ' ' || captures.process_name
+                    )
+                ),
+                'pending'
             FROM captures
             WHERE NOT EXISTS (
                 SELECT 1
@@ -3382,24 +3726,16 @@ pub fn run() {
             if let Some(window) = app_handle.get_webview_window("main") {
                 let allow_exit = state.allow_exit.clone();
                 let window_handle = window.clone();
-                let app_for_notification = app_handle.clone();
                 window.on_window_event(move |event| {
                     if let WindowEvent::CloseRequested { api, .. } = event {
+                        if cfg!(debug_assertions) {
+                            return;
+                        }
+
                         if !allow_exit.load(Ordering::Relaxed) {
                             api.prevent_close();
                             let _ = window_handle.hide();
                         }
-
-                        return;
-                    }
-
-                    if window_handle.is_minimized().unwrap_or(false) {
-                        // Keep the app running in the tray when users minimize the window.
-                        let _ = window_handle.hide();
-                        let _ = window_handle.unminimize();
-                        show_minimized_to_tray_notification(&app_for_notification);
-
-                        return;
                     }
                 });
             }
@@ -3705,6 +4041,54 @@ mod tests {
     }
 
     #[test]
+    fn initialize_database_adds_window_metadata_columns() {
+        let connection = Connection::open_in_memory().expect("failed to open in-memory sqlite db");
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE settings (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    interval_minutes INTEGER NOT NULL,
+                    retention_days INTEGER NOT NULL,
+                    storage_cap_gb REAL NOT NULL,
+                    is_paused INTEGER NOT NULL
+                );
+
+                CREATE TABLE captures (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    day_key TEXT NOT NULL,
+                    captured_at TEXT NOT NULL,
+                    image_path TEXT NOT NULL,
+                    thumbnail_path TEXT NOT NULL,
+                    width INTEGER NOT NULL,
+                    height INTEGER NOT NULL
+                );
+
+                INSERT INTO settings (id, interval_minutes, retention_days, storage_cap_gb, is_paused)
+                VALUES (1, 2, 30, 5.0, 0);
+                ",
+            )
+            .expect("failed to seed legacy schema");
+
+        initialize_database(&connection).expect("failed to migrate legacy schema");
+
+        let mut stmt = connection
+            .prepare("PRAGMA table_info(captures)")
+            .expect("failed to prepare table info query");
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("failed to execute table info query");
+
+        let mut columns = Vec::new();
+        for row in rows {
+            columns.push(row.expect("failed to read table info row"));
+        }
+
+        assert!(columns.contains(&"window_title".to_string()));
+        assert!(columns.contains(&"process_name".to_string()));
+    }
+
+    #[test]
     fn parse_retrieval_time_hint_supports_yesterday_queries() {
         let parsed = parse_retrieval_time_hint("what was I doing around 3 PM yesterday");
         assert!(parsed.day_key.is_some());
@@ -3726,6 +4110,26 @@ mod tests {
         assert!(parsed.phrases.contains(&"release notes".to_string()));
         assert!(parsed.terms.contains(&"release".to_string()));
         assert!(parsed.terms.contains(&"notes".to_string()));
+    }
+
+    #[test]
+    fn build_retrieval_snippet_uses_window_metadata_when_available() {
+        let query_parts = parse_retrieval_query_parts("figma");
+        let snippet = build_retrieval_snippet(
+            "",
+            "",
+            "Figma - Design System",
+            "figma.exe",
+            &query_parts,
+            "fallback",
+        );
+
+        assert_eq!(snippet.source, "window");
+        assert!(snippet.snippet.to_ascii_lowercase().contains("window:"));
+        assert!(snippet
+            .highlight_terms
+            .iter()
+            .any(|term| term.to_ascii_lowercase() == "figma"));
     }
 
     #[test]

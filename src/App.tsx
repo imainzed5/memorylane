@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./App.css";
 
 type DaySummary = {
@@ -20,6 +21,8 @@ type CaptureRecord = {
   thumbnailDataUrl: string;
   captureNote: string;
   ocrText: string;
+  windowTitle: string;
+  processName: string;
   width: number;
   height: number;
 };
@@ -31,6 +34,7 @@ type RetrievalSearchResult = {
   timestampLabel: string;
   snippet: string;
   matchReason: string;
+  matchSources: string[];
   score: number;
   snippetSource: string;
   highlightTerms: string[];
@@ -145,6 +149,7 @@ type ThemeOption = {
 type TopBarProps = {
   hasNextDay: boolean;
   hasPreviousDay: boolean;
+  isWindowMaximized: boolean;
   isJumpToNowDisabled: boolean;
   isRecording: boolean;
   selectedDayCaptureCount: number;
@@ -156,6 +161,14 @@ type TopBarProps = {
   onSelectDay: (dayKey: string) => void;
   onSelectNextDay: () => void;
   onSelectPreviousDay: () => void;
+  onToggleWindowMaximize: () => void;
+};
+
+type WindowControlsProps = {
+  isWindowMaximized: boolean;
+  onCloseWindow: () => void;
+  onMinimizeWindow: () => void;
+  onToggleWindowMaximize: () => void;
 };
 
 type DayRailProps = {
@@ -219,6 +232,7 @@ type SettingsModalProps = {
   backupImportPath: string;
   backupPassphrase: string;
   backupStatus: string;
+  backupStatusTone: "neutral" | "success" | "error";
   draftIntervalMinutes: number;
   draftThemeId: ThemeId;
   draftRetentionDays: number;
@@ -227,8 +241,11 @@ type SettingsModalProps = {
   isReindexBusy: boolean;
   isCustomInterval: boolean;
   intervalMinutes: number;
+  maintenanceStage: string;
+  maintenanceProgress: number;
   ocrHealth: OcrHealthPayload;
   ocrReindexStatus: string;
+  ocrReindexStatusTone: "neutral" | "success" | "error";
   onBackupImportPathChange: (nextValue: string) => void;
   onBackupPassphraseChange: (nextValue: string) => void;
   onEnableCustomInterval: () => void;
@@ -291,6 +308,18 @@ const TIMELINE_VIRTUAL_WINDOW = 72;
 const TIMELINE_THUMB_WIDTH_PX = 96;
 const LEGACY_THEME_ID: ThemeId = "amber-noir";
 const ONBOARDING_THEME_ID: ThemeId = "obsidian-jade";
+const SEARCH_SUGGESTIONS = ["around 3 PM yesterday", "release notes", "figma board", "meeting notes"];
+
+const MATCH_SOURCE_LABELS: Record<string, string> = {
+  note: "note",
+  ocr: "ocr",
+  window: "window",
+  time: "time",
+  day: "day",
+  metadata: "metadata",
+  "exact phrase": "exact phrase",
+  "all terms": "all terms",
+};
 
 const THEME_OPTIONS: ThemeOption[] = [
   {
@@ -437,6 +466,11 @@ function formatStorageValue(usedGb: number): string {
   return `${usedGb.toFixed(2)} GB`;
 }
 
+function formatMatchSourceLabel(source: string): string {
+  const normalized = source.trim().toLowerCase();
+  return MATCH_SOURCE_LABELS[normalized] ?? normalized;
+}
+
 function fallbackDays(): DaySummary[] {
   const days: DaySummary[] = [];
 
@@ -507,9 +541,22 @@ function deriveContextBadge(capture: CaptureRecord | null): string {
     return "No capture selected";
   }
 
-  const pathChunks = capture.imagePath.split(/[\\/]/);
-  const fileName = pathChunks[pathChunks.length - 1] ?? "capture";
-  return `Window context pending · ${fileName}`;
+  const title = capture.windowTitle.trim();
+  const processName = capture.processName.trim();
+
+  if (title && processName) {
+    return `${processName} · ${title}`;
+  }
+
+  if (title) {
+    return title;
+  }
+
+  if (processName) {
+    return `App: ${processName}`;
+  }
+
+  return "Window metadata unavailable for this capture";
 }
 
 function densityMiniBars(density: number[]): number[] {
@@ -581,6 +628,7 @@ function renderHighlightedSnippet(snippet: string, highlightTerms: string[]): Re
 function TopBar({
   hasNextDay,
   hasPreviousDay,
+  isWindowMaximized,
   isJumpToNowDisabled,
   isRecording,
   selectedDayCaptureCount,
@@ -592,10 +640,11 @@ function TopBar({
   onSelectDay,
   onSelectNextDay,
   onSelectPreviousDay,
+  onToggleWindowMaximize,
 }: TopBarProps) {
   return (
-    <header className="panel topbar">
-      <div className="topbar-brand">
+    <header className={isWindowMaximized ? "panel topbar is-maximized" : "panel topbar"}>
+      <div className="topbar-brand" data-tauri-drag-region onDoubleClick={onToggleWindowMaximize}>
         <img src="/memorylane_logo.jpg" alt="" aria-hidden="true" />
         <strong>MemoryLane</strong>
         <span className={isRecording ? "status-pill recording" : "status-pill paused"}>
@@ -603,19 +652,38 @@ function TopBar({
         </span>
       </div>
 
-      <div className="topbar-main-controls">
-        <button className="secondary compact" type="button" onClick={onSelectPreviousDay} disabled={!hasPreviousDay}>
-          ← prev
-        </button>
+      <div className="topbar-focus">
+        <p className="topbar-focus-label" data-tauri-drag-region>
+          Selected day
+        </p>
+        <div className="topbar-day-row">
+          <button
+            className="secondary compact topbar-nav"
+            type="button"
+            onClick={onSelectPreviousDay}
+            disabled={!hasPreviousDay}
+            aria-label="Previous day"
+          >
+            ←
+          </button>
 
-        <div className="topbar-day-summary">
-          <h1>{selectedDayLabel}</h1>
-          <p>{selectedDayCaptureCount} captures</p>
+          <div className="topbar-day-summary-hitbox" data-tauri-drag-region onDoubleClick={onToggleWindowMaximize}>
+            <div className="topbar-day-summary">
+              <h1>{selectedDayLabel}</h1>
+              <p>{selectedDayCaptureCount} captures</p>
+            </div>
+          </div>
+
+          <button
+            className="secondary compact topbar-nav"
+            type="button"
+            onClick={onSelectNextDay}
+            disabled={!hasNextDay}
+            aria-label="Next day"
+          >
+            →
+          </button>
         </div>
-
-        <button className="secondary compact" type="button" onClick={onSelectNextDay} disabled={!hasNextDay}>
-          next →
-        </button>
       </div>
 
       <div className="topbar-actions">
@@ -635,8 +703,8 @@ function TopBar({
           />
         </label>
 
-        <button className="secondary" type="button" onClick={onJumpToNow} disabled={isJumpToNowDisabled}>
-          jump to now
+        <button className="secondary compact topbar-now" type="button" onClick={onJumpToNow} disabled={isJumpToNowDisabled}>
+          now
         </button>
 
         <button className="secondary icon-button" type="button" title="Settings" aria-label="Open settings" onClick={onOpenSettings}>
@@ -653,6 +721,49 @@ function TopBar({
         </button>
       </div>
     </header>
+  );
+}
+
+function WindowControls({
+  isWindowMaximized,
+  onCloseWindow,
+  onMinimizeWindow,
+  onToggleWindowMaximize,
+}: WindowControlsProps) {
+  return (
+    <div
+      className={isWindowMaximized ? "window-controls-rail is-maximized" : "window-controls-rail"}
+      role="toolbar"
+      aria-label="Window controls"
+    >
+      <button
+        className="secondary topbar-window-btn"
+        type="button"
+        title="Minimize"
+        aria-label="Minimize window"
+        onClick={onMinimizeWindow}
+      >
+        <span aria-hidden="true">_</span>
+      </button>
+      <button
+        className="secondary topbar-window-btn"
+        type="button"
+        title={isWindowMaximized ? "Restore" : "Maximize"}
+        aria-label={isWindowMaximized ? "Restore window" : "Maximize window"}
+        onClick={onToggleWindowMaximize}
+      >
+        <span aria-hidden="true">{isWindowMaximized ? "❐" : "□"}</span>
+      </button>
+      <button
+        className="secondary topbar-window-btn topbar-window-close"
+        type="button"
+        title="Close"
+        aria-label="Close window"
+        onClick={onCloseWindow}
+      >
+        <span aria-hidden="true">×</span>
+      </button>
+    </div>
   );
 }
 
@@ -852,6 +963,11 @@ function UtilityRail({
           : noteDirty
             ? "Unsaved"
             : "";
+  const focusPreview = dayIntelligence?.focusBlocks.slice(0, 3) ?? [];
+  const focusOverflow = dayIntelligence?.focusBlocks.slice(3) ?? [];
+  const highlightsPreview = dayIntelligence?.changeHighlights.slice(0, 3) ?? [];
+  const highlightsOverflow = dayIntelligence?.changeHighlights.slice(3) ?? [];
+  const topThemePreview = dayIntelligence?.topTerms.slice(0, 4) ?? [];
 
   return (
     <aside className="panel utility-rail">
@@ -871,17 +987,37 @@ function UtilityRail({
 
       <section className="utility-section">
         <h3>Search Captures</h3>
-        <input
-          ref={searchInputRef}
-          type="text"
-          value={captureSearchQuery}
-          placeholder="search notes, OCR, or around 3 PM yesterday..."
-          onChange={(event) => onSearchQueryChange(event.currentTarget.value)}
-        />
+        <div className="search-command">
+          <span className="search-command-key">/</span>
+          <input
+            ref={searchInputRef}
+            type="text"
+            value={captureSearchQuery}
+            placeholder="Search notes, OCR, apps, or around 3 PM..."
+            onChange={(event) => onSearchQueryChange(event.currentTarget.value)}
+          />
+        </div>
         {!ocrHealth.engineAvailable ? <p className="storage-meta warning">{ocrHealth.statusMessage}</p> : null}
+        {captureSearchQuery.trim().length === 0 ? (
+          <>
+            <p className="storage-meta">Press `/` to search. Use `n` / `Shift+n` to move through matches.</p>
+            <div className="search-suggestion-row">
+              {SEARCH_SUGGESTIONS.map((suggestion) => (
+                <button
+                  key={suggestion}
+                  className="secondary compact search-suggestion"
+                  type="button"
+                  onClick={() => onSearchQueryChange(suggestion)}
+                >
+                  {suggestion}
+                </button>
+              ))}
+            </div>
+          </>
+        ) : null}
         {captureSearchQuery.trim().length > 0 ? (
           <>
-            <p className="storage-meta">Press `/` to focus search. Press `n` to jump through results.</p>
+            <p className="storage-meta">Local search across notes, OCR text, app metadata, and time hints.</p>
             {isRetrievalLoading ? <p className="storage-meta">Searching archive...</p> : null}
             {retrievalError ? <p className="storage-meta">{retrievalError}</p> : null}
             {!isRetrievalLoading && !retrievalError ? (
@@ -894,45 +1030,115 @@ function UtilityRail({
                       type="button"
                       onClick={() => onSelectSearchResult(result)}
                     >
-                      <strong>
-                        {formatViewerDate(result.dayKey)} · {result.timestampLabel}
-                      </strong>
+                      <div className="retrieval-result-header">
+                        <strong>
+                          {formatViewerDate(result.dayKey)} · {result.timestampLabel}
+                        </strong>
+                        <div className="retrieval-result-badges">
+                          {result.matchSources.length > 0
+                            ? result.matchSources.slice(0, 4).map((source) => (
+                                <span key={`${result.captureId}-${source}`} className="source-pill">
+                                  {formatMatchSourceLabel(source)}
+                                </span>
+                              ))
+                            : [<span key={`${result.captureId}-match`} className="source-pill">match</span>]}
+                        </div>
+                      </div>
                       <span>{result.matchReason}</span>
                       <small>{renderHighlightedSnippet(result.snippet, result.highlightTerms)}</small>
                     </button>
                   ))}
                 </div>
               ) : (
-                <p className="storage-meta">No archive matches for this query yet.</p>
+                <p className="storage-meta">No matches yet. Try broader terms or a time hint like "around 2 PM".</p>
               )
             ) : null}
           </>
         ) : null}
       </section>
 
-      <section className="utility-section">
-        <h3>Day Intelligence</h3>
+      <section className="utility-section intelligence-section">
+        <div className="section-row intelligence-head">
+          <h3>Day Intelligence</h3>
+          {dayIntelligence ? (
+            <span className="source-pill intelligence-session-pill">{dayIntelligence.focusBlocks.length} sessions</span>
+          ) : null}
+        </div>
         {dayIntelligenceLoading ? <p className="storage-meta">Summarizing this day...</p> : null}
         {dayIntelligenceError ? <p className="storage-meta">{dayIntelligenceError}</p> : null}
         {!dayIntelligenceLoading && !dayIntelligenceError && dayIntelligence ? (
           <>
-            <p className="storage-meta">{dayIntelligence.summary}</p>
-            {dayIntelligence.focusBlocks.length > 0 ? (
+            <p className="storage-meta intelligence-summary">{dayIntelligence.summary}</p>
+
+            {topThemePreview.length > 0 ? (
+              <div className="retrieval-result-badges intelligence-themes" aria-label="Top themes">
+                {topThemePreview.map((term, index) => (
+                  <span key={`term-${index}-${term}`} className="source-pill">
+                    {term}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+
+            {focusPreview.length > 0 ? (
               <div className="intelligence-blocks">
-                {dayIntelligence.focusBlocks.slice(0, 3).map((block) => (
+                {focusPreview.map((block) => (
                   <article key={`${block.startTimestampLabel}-${block.endTimestampLabel}`} className="intelligence-block">
                     <strong>
                       {block.startTimestampLabel} - {block.endTimestampLabel}
                     </strong>
-                    <span>
-                      {block.captureCount} captures · {block.dominantContext}
-                    </span>
+                    <span>{block.captureCount} captures</span>
+                    <p>{block.dominantContext}</p>
                   </article>
                 ))}
               </div>
             ) : null}
-            {dayIntelligence.changeHighlights.length > 0 ? (
-              <p className="storage-meta">{dayIntelligence.changeHighlights[0]}</p>
+
+            {focusOverflow.length > 0 ? (
+              <details className="intelligence-fold">
+                <summary>Show {focusOverflow.length} more session{focusOverflow.length === 1 ? "" : "s"}</summary>
+                <div className="intelligence-blocks intelligence-blocks-overflow">
+                  {focusOverflow.map((block) => (
+                    <article key={`${block.startTimestampLabel}-${block.endTimestampLabel}`} className="intelligence-block">
+                      <strong>
+                        {block.startTimestampLabel} - {block.endTimestampLabel}
+                      </strong>
+                      <span>{block.captureCount} captures</span>
+                      <p>{block.dominantContext}</p>
+                    </article>
+                  ))}
+                </div>
+              </details>
+            ) : null}
+
+            {highlightsPreview.length > 0 ? (
+              <>
+                <p className="intelligence-subtitle">What changed today</p>
+                <ul className="intelligence-highlights">
+                  {highlightsPreview.map((highlight, index) => (
+                    <li key={`highlight-preview-${index}-${highlight}`}>{highlight}</li>
+                  ))}
+                </ul>
+              </>
+            ) : null}
+
+            {highlightsOverflow.length > 0 ? (
+              <details className="intelligence-fold">
+                <summary>Show {highlightsOverflow.length} more change note{highlightsOverflow.length === 1 ? "" : "s"}</summary>
+                <ul className="intelligence-highlights intelligence-highlights-overflow">
+                  {highlightsOverflow.map((highlight, index) => (
+                    <li key={`highlight-overflow-${index}-${highlight}`}>{highlight}</li>
+                  ))}
+                </ul>
+              </details>
+            ) : null}
+
+            {highlightsPreview.length === 0 && highlightsOverflow.length === 0 ? (
+              <p className="storage-meta">No major context shifts detected for this day.</p>
+            ) : null}
+
+            {dayIntelligence.focusBlocks.length === 0 ? (
+              <p className="storage-meta">No sessions yet. Captures will appear here as your day fills in.</p>
             ) : null}
           </>
         ) : null}
@@ -1011,6 +1217,7 @@ function SettingsModal({
   backupImportPath,
   backupPassphrase,
   backupStatus,
+  backupStatusTone,
   draftIntervalMinutes,
   draftThemeId,
   draftRetentionDays,
@@ -1019,8 +1226,11 @@ function SettingsModal({
   isReindexBusy,
   isCustomInterval,
   intervalMinutes,
+  maintenanceStage,
+  maintenanceProgress,
   ocrHealth,
   ocrReindexStatus,
+  ocrReindexStatusTone,
   onBackupImportPathChange,
   onBackupPassphraseChange,
   onEnableCustomInterval,
@@ -1317,9 +1527,33 @@ function SettingsModal({
               {isReindexBusy ? "Reindexing OCR..." : "Reindex OCR for all captures"}
             </button>
           </div>
+
+          {maintenanceStage ? <p className="storage-meta">{maintenanceStage}</p> : null}
+          {maintenanceProgress > 0 ? (
+            <div className="usage-track maintenance-track" role="presentation">
+              <span style={{ width: `${Math.max(1, Math.min(100, maintenanceProgress))}%` }} />
+            </div>
+          ) : null}
+
           {!ocrHealth.engineAvailable ? <p className="storage-meta warning">{ocrHealth.statusMessage}</p> : null}
-          {ocrReindexStatus ? <p className="storage-meta">{ocrReindexStatus}</p> : null}
-          {backupStatus ? <p className="storage-meta">{backupStatus}</p> : null}
+          {ocrReindexStatus ? (
+            <p
+              className={
+                ocrReindexStatusTone === "error"
+                  ? "storage-meta warning"
+                  : ocrReindexStatusTone === "success"
+                    ? "storage-meta success"
+                    : "storage-meta"
+              }
+            >
+              {ocrReindexStatus}
+            </p>
+          ) : null}
+          {backupStatus ? (
+            <p className={backupStatusTone === "error" ? "storage-meta warning" : backupStatusTone === "success" ? "storage-meta success" : "storage-meta"}>
+              {backupStatus}
+            </p>
+          ) : null}
         </section>
 
         <div className="settings-footer">
@@ -1505,6 +1739,7 @@ function TimelineStrip({
 }
 
 function App() {
+  const currentWindow = useMemo(() => getCurrentWindow(), []);
   const [daySummaries, setDaySummaries] = useState<DaySummary[]>([]);
   const [selectedDayKey, setSelectedDayKey] = useState<string>(() => dayKeyFromDate(new Date()));
   const [captures, setCaptures] = useState<CaptureRecord[]>([]);
@@ -1564,12 +1799,17 @@ function App() {
   const [backupPassphrase, setBackupPassphrase] = useState<string>("");
   const [backupImportPath, setBackupImportPath] = useState<string>("");
   const [backupStatus, setBackupStatus] = useState<string>("");
+  const [backupStatusTone, setBackupStatusTone] = useState<"neutral" | "success" | "error">("neutral");
   const [isBackupBusy, setIsBackupBusy] = useState<boolean>(false);
   const [ocrReindexStatus, setOcrReindexStatus] = useState<string>("");
+  const [ocrReindexStatusTone, setOcrReindexStatusTone] = useState<"neutral" | "success" | "error">("neutral");
   const [isOcrReindexBusy, setIsOcrReindexBusy] = useState<boolean>(false);
+  const [maintenanceStage, setMaintenanceStage] = useState<string>("");
+  const [maintenanceProgress, setMaintenanceProgress] = useState<number>(0);
   const [noteDraft, setNoteDraft] = useState<string>("");
   const [noteSaveState, setNoteSaveState] = useState<NoteSaveState>("idle");
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
+  const [isWindowMaximized, setIsWindowMaximized] = useState<boolean>(false);
   const [actionMessage, setActionMessage] = useState<string>("Loading MemoryLane services...");
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [clockMs, setClockMs] = useState<number>(Date.now());
@@ -1613,6 +1853,40 @@ function App() {
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", appliedThemeId);
   }, [appliedThemeId]);
+
+  useEffect(() => {
+    let isMounted = true;
+    let unlistenResize: (() => void) | undefined;
+
+    const syncMaximizedState = async () => {
+      try {
+        const maximized = await currentWindow.isMaximized();
+        if (isMounted) {
+          setIsWindowMaximized(maximized);
+        }
+      } catch {}
+    };
+
+    void syncMaximizedState();
+
+    void currentWindow
+      .onResized(() => {
+        void syncMaximizedState();
+      })
+      .then((unlisten) => {
+        unlistenResize = unlisten;
+      })
+      .catch(() => {
+        unlistenResize = undefined;
+      });
+
+    return () => {
+      isMounted = false;
+      if (unlistenResize) {
+        unlistenResize();
+      }
+    };
+  }, [currentWindow]);
 
   const navigationDays = useMemo(
     () => (daySummaries.length > 0 ? daySummaries : fallbackDays()),
@@ -1662,6 +1936,8 @@ function App() {
         formatViewerDate(capture.dayKey),
         capture.captureNote,
         capture.ocrText,
+        capture.windowTitle,
+        capture.processName,
       ]
         .join(" ")
         .toLowerCase();
@@ -2318,20 +2594,30 @@ function App() {
 
   const exportEncryptedBackup = useCallback(async () => {
     if (backupPassphrase.trim().length < 8) {
+      setBackupStatusTone("error");
       setBackupStatus("Passphrase must be at least 8 characters before exporting.");
       return;
     }
 
     setIsBackupBusy(true);
+    setBackupStatusTone("neutral");
+    setMaintenanceStage("Preparing encrypted backup...");
+    setMaintenanceProgress(24);
     setBackupStatus("Preparing encrypted backup...");
 
     try {
       const path = await invoke<string>("export_encrypted_backup", {
         passphrase: backupPassphrase,
       });
+      setBackupStatusTone("success");
+      setMaintenanceStage("Encrypted backup complete.");
+      setMaintenanceProgress(100);
       setBackupStatus(`Encrypted backup exported to ${path}`);
       setActionMessage("Encrypted backup export completed.");
     } catch {
+      setBackupStatusTone("error");
+      setMaintenanceStage("Encrypted backup failed.");
+      setMaintenanceProgress(0);
       setBackupStatus("Backup export failed. Check passphrase and archive integrity.");
       setActionMessage("Unable to export encrypted backup.");
     } finally {
@@ -2341,16 +2627,21 @@ function App() {
 
   const importEncryptedBackup = useCallback(async () => {
     if (backupPassphrase.trim().length < 8) {
+      setBackupStatusTone("error");
       setBackupStatus("Passphrase must be at least 8 characters before importing.");
       return;
     }
 
     if (backupImportPath.trim().length === 0) {
+      setBackupStatusTone("error");
       setBackupStatus("Provide a .mlbk file path before importing.");
       return;
     }
 
     setIsBackupBusy(true);
+    setBackupStatusTone("neutral");
+    setMaintenanceStage("Decrypting and restoring backup...");
+    setMaintenanceProgress(32);
     setBackupStatus("Decrypting and restoring backup...");
 
     try {
@@ -2360,11 +2651,17 @@ function App() {
       });
 
       await refreshAll(selectedDayKeyRef.current);
+      setBackupStatusTone("success");
+      setMaintenanceStage("Encrypted backup restored.");
+      setMaintenanceProgress(100);
       setBackupStatus(
         `Restore complete: ${payload.captureCount} captures across ${payload.dayCount} days (${formatCaptureTimestamp(payload.restoredAt)}).`,
       );
       setActionMessage("Encrypted backup restored and timeline refreshed.");
     } catch {
+      setBackupStatusTone("error");
+      setMaintenanceStage("Encrypted backup restore failed.");
+      setMaintenanceProgress(0);
       setBackupStatus("Backup import failed. Verify file path and passphrase.");
       setActionMessage("Unable to import encrypted backup.");
     } finally {
@@ -2378,16 +2675,25 @@ function App() {
     }
 
     setIsOcrReindexBusy(true);
+    setOcrReindexStatusTone("neutral");
+    setMaintenanceStage("Queueing OCR reindex job...");
+    setMaintenanceProgress(20);
     setOcrReindexStatus("Queueing OCR reindex job...");
 
     try {
       const payload = await invoke<ReindexCapturesPayload>("reindex_all_captures");
+      setOcrReindexStatusTone("success");
+      setMaintenanceStage("OCR reindex job queued.");
+      setMaintenanceProgress(100);
       setOcrReindexStatus(
         `Queued OCR reindex for ${payload.queuedCount} capture(s) at ${formatCaptureTimestamp(payload.queuedAt)}.`,
       );
       setActionMessage(`Queued OCR reindex for ${payload.queuedCount} capture(s).`);
       await refreshSettingsAndStats();
     } catch {
+      setOcrReindexStatusTone("error");
+      setMaintenanceStage("OCR reindex could not be queued.");
+      setMaintenanceProgress(0);
       setOcrReindexStatus("Unable to start OCR reindex. Install Tesseract and retry.");
       setActionMessage("Unable to start OCR reindex.");
       try {
@@ -2696,12 +3002,51 @@ function App() {
   const contextBadge = deriveContextBadge(selectedCapture);
   const noteDirty = selectedCapture ? noteDraft !== selectedCapture.captureNote : false;
 
+  const handleWindowMinimize = useCallback(async () => {
+    try {
+      await currentWindow.minimize();
+    } catch (error) {
+      console.error("Failed to minimize window", error);
+    }
+  }, [currentWindow]);
+
+  const handleWindowToggleMaximize = useCallback(async () => {
+    try {
+      await currentWindow.toggleMaximize();
+      setIsWindowMaximized(await currentWindow.isMaximized());
+    } catch (error) {
+      console.error("Failed to toggle maximize", error);
+    }
+  }, [currentWindow]);
+
+  const handleWindowClose = useCallback(async () => {
+    try {
+      await currentWindow.close();
+    } catch (error) {
+      console.error("Failed to close window", error);
+    }
+  }, [currentWindow]);
+
   return (
     <div className="memorylane-root" data-theme={appliedThemeId}>
+      <div className="desktop-titleband">
+        <div className="desktop-titleband-drag" data-tauri-drag-region onDoubleClick={handleWindowToggleMaximize}>
+          <span className="desktop-window-title">MemoryLane</span>
+        </div>
+
+        <WindowControls
+          isWindowMaximized={isWindowMaximized}
+          onCloseWindow={handleWindowClose}
+          onMinimizeWindow={handleWindowMinimize}
+          onToggleWindowMaximize={handleWindowToggleMaximize}
+        />
+      </div>
+
       <div className="app-shell">
         <TopBar
           hasNextDay={hasNextDay}
           hasPreviousDay={hasPreviousDay}
+          isWindowMaximized={isWindowMaximized}
           isJumpToNowDisabled={!isTodaySelected || filteredCaptures.length === 0}
           isRecording={isRecording}
           selectedDayCaptureCount={selectedDayCaptureCount}
@@ -2713,6 +3058,7 @@ function App() {
           onSelectDay={setSelectedDayKey}
           onSelectNextDay={() => shiftDay(-1)}
           onSelectPreviousDay={() => shiftDay(1)}
+          onToggleWindowMaximize={handleWindowToggleMaximize}
         />
 
         <DayRail
@@ -2811,6 +3157,7 @@ function App() {
           backupImportPath={backupImportPath}
           backupPassphrase={backupPassphrase}
           backupStatus={backupStatus}
+          backupStatusTone={backupStatusTone}
           draftIntervalMinutes={draftIntervalMinutes}
           draftThemeId={draftThemeId}
           draftRetentionDays={draftRetentionDays}
@@ -2819,8 +3166,11 @@ function App() {
           isReindexBusy={isOcrReindexBusy}
           isCustomInterval={isDraftIntervalCustom}
           intervalMinutes={intervalMinutes}
+          maintenanceStage={maintenanceStage}
+          maintenanceProgress={maintenanceProgress}
           ocrHealth={ocrHealth}
           ocrReindexStatus={ocrReindexStatus}
+          ocrReindexStatusTone={ocrReindexStatusTone}
           onBackupImportPathChange={setBackupImportPath}
           onBackupPassphraseChange={setBackupPassphrase}
           onEnableCustomInterval={() => setIsDraftIntervalCustom(true)}

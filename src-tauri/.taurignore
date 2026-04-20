@@ -1,0 +1,9 @@
+# Prevent Tauri dev rebuild loops from cargo output directories.
+target
+target-tauri
+src-tauri/target
+src-tauri/target-tauri
+src-tauri/target-dev
+
+# Generated artifacts that should not trigger app rebuilds.
+gen/schemas
