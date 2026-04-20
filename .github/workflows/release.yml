@@ -21,8 +21,6 @@ concurrency:
 jobs:
   build:
     runs-on: windows-latest
-    env:
-      CARGO_TARGET_DIR: ${{ runner.temp }}\memorylane-cargo-target
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -44,14 +42,33 @@ jobs:
       - name: Build Windows installers
         run: npm run build:desktop
 
+      - name: Stage release assets
+        shell: pwsh
+        run: |
+          $bundleRoot = Join-Path $env:LOCALAPPDATA "memorylane\cargo-target\release\bundle"
+          $stagingDir = Join-Path $env:GITHUB_WORKSPACE "release-assets"
+
+          if (-not (Test-Path $bundleRoot)) {
+            throw "Bundle output not found at $bundleRoot"
+          }
+
+          New-Item -ItemType Directory -Force -Path $stagingDir | Out-Null
+
+          Get-ChildItem -Path $bundleRoot -Recurse -File |
+            Where-Object { $_.Extension -in '.msi', '.exe', '.zip' } |
+            Copy-Item -Destination $stagingDir -Force
+
+          Get-ChildItem -Path $stagingDir
+
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref_name }}
           name: MemoryLane ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref_name }}
           generate_release_notes: true
+          overwrite_files: true
           files: |
-            src-tauri/target/release/bundle/**/*.msi
-            src-tauri/target/release/bundle/**/*.exe
-            src-tauri/target/release/bundle/**/*.zip
-          fail_on_unmatched_files: false
+            release-assets/*.msi
+            release-assets/*.exe
+            release-assets/*.zip
+          fail_on_unmatched_files: true

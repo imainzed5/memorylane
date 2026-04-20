@@ -40,8 +40,9 @@ For the optional OCR installer component in NSIS builds, place `tesseract-instal
 
 1. Create a version tag, for example: `git tag v0.1.0`
 2. Push the tag to GitHub: `git push origin v0.1.0`
-3. The release workflow builds the Windows installers and publishes them to GitHub Releases for that tag.
-4. You can also run the workflow manually from the GitHub Actions tab by supplying an existing tag name.
+3. The release workflow builds the Windows installers and publishes them as release assets for that tag.
+4. GitHub still shows the tag itself as the version label and source archive; the installer is the uploaded `.msi` or `.exe` asset.
+5. You can also run the workflow manually from the GitHub Actions tab by supplying an existing tag name.
 
 ## Keyboard Shortcuts
 
