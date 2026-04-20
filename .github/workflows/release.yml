@@ -70,5 +70,4 @@ jobs:
           files: |
             release-assets/*.msi
             release-assets/*.exe
-            release-assets/*.zip
           fail_on_unmatched_files: true
