@@ -53,6 +53,10 @@ const VALID_THEME_IDS: [&str; 5] = [
 const SEARCH_CACHE_CAPACITY: usize = 64;
 const INTELLIGENCE_CACHE_CAPACITY: usize = 32;
 const INTELLIGENCE_SESSION_GAP_MINUTES: i64 = 20;
+const MAX_RULE_ENTRIES: usize = 24;
+const MAX_RULE_ENTRY_LEN: usize = 80;
+const MAX_TAG_ENTRIES: usize = 16;
+const MAX_TAG_ENTRY_LEN: usize = 32;
 
 const BACKUP_MAGIC: &[u8; 5] = b"MLBK1";
 const BACKUP_SALT_LEN: usize = 16;
@@ -87,6 +91,12 @@ struct Settings {
     is_paused: bool,
     startup_on_boot: bool,
     theme_id: String,
+    excluded_processes: Vec<String>,
+    excluded_window_keywords: Vec<String>,
+    pause_processes: Vec<String>,
+    pause_window_keywords: Vec<String>,
+    sensitive_window_keywords: Vec<String>,
+    sensitive_capture_mode: SensitiveCaptureMode,
 }
 
 #[derive(Serialize)]
@@ -99,6 +109,37 @@ struct SettingsPayload {
     startup_on_boot: bool,
     startup_on_boot_supported: bool,
     theme_id: String,
+    excluded_processes: Vec<String>,
+    excluded_window_keywords: Vec<String>,
+    pause_processes: Vec<String>,
+    pause_window_keywords: Vec<String>,
+    sensitive_window_keywords: Vec<String>,
+    sensitive_capture_mode: String,
+}
+
+#[derive(Clone, Copy)]
+enum SensitiveCaptureMode {
+    Skip,
+    Redact,
+    Pause,
+}
+
+impl SensitiveCaptureMode {
+    fn from_raw(raw: &str) -> SensitiveCaptureMode {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "redact" => SensitiveCaptureMode::Redact,
+            "pause" => SensitiveCaptureMode::Pause,
+            _ => SensitiveCaptureMode::Skip,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            SensitiveCaptureMode::Skip => "skip",
+            SensitiveCaptureMode::Redact => "redact",
+            SensitiveCaptureMode::Pause => "pause",
+        }
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -130,6 +171,9 @@ struct DayCapturePayload {
     ocr_text: String,
     window_title: String,
     process_name: String,
+    is_bookmarked: bool,
+    is_favorite: bool,
+    tags: Vec<String>,
     width: i64,
     height: i64,
 }
@@ -147,6 +191,9 @@ struct RetrievalSearchResultPayload {
     score: f64,
     snippet_source: String,
     highlight_terms: Vec<String>,
+    is_bookmarked: bool,
+    is_favorite: bool,
+    tags: Vec<String>,
 }
 
 #[derive(Clone, Default)]
@@ -217,6 +264,11 @@ struct IntelligenceCacheEntry {
 struct RetrievalQueryParts {
     phrases: Vec<String>,
     terms: Vec<String>,
+    app_terms: Vec<String>,
+    window_terms: Vec<String>,
+    tag_terms: Vec<String>,
+    require_bookmarked: bool,
+    require_favorite: bool,
 }
 
 #[derive(Clone)]
@@ -244,6 +296,18 @@ struct EncryptedBackupSettings {
     is_paused: bool,
     startup_on_boot: bool,
     theme_id: String,
+    #[serde(default)]
+    excluded_processes: Vec<String>,
+    #[serde(default)]
+    excluded_window_keywords: Vec<String>,
+    #[serde(default)]
+    pause_processes: Vec<String>,
+    #[serde(default)]
+    pause_window_keywords: Vec<String>,
+    #[serde(default)]
+    sensitive_window_keywords: Vec<String>,
+    #[serde(default = "default_sensitive_capture_mode")]
+    sensitive_capture_mode: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -257,6 +321,12 @@ struct EncryptedBackupCapture {
     window_title: String,
     #[serde(default)]
     process_name: String,
+    #[serde(default)]
+    is_bookmarked: bool,
+    #[serde(default)]
+    is_favorite: bool,
+    #[serde(default)]
+    tags: Vec<String>,
     width: i64,
     height: i64,
     relative_image_path: String,
@@ -268,6 +338,61 @@ struct EncryptedBackupCapture {
     ocr_status: String,
     ocr_error: Option<String>,
     indexed_at: Option<String>,
+}
+
+fn default_sensitive_capture_mode() -> String {
+    "skip".to_string()
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CaptureSuppressedEventPayload {
+    mode: String,
+    reason: String,
+    captured: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CaptureReviewPayload {
+    capture_id: i64,
+    is_bookmarked: bool,
+    is_favorite: bool,
+    tags: Vec<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReviewShortcutCapturePayload {
+    capture_id: i64,
+    day_key: String,
+    captured_at: String,
+    timestamp_label: String,
+    tags: Vec<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReviewTagShortcutPayload {
+    tag: String,
+    capture_count: i64,
+    latest_capture_id: i64,
+    latest_day_key: String,
+    latest_timestamp_label: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReviewShortcutsPayload {
+    bookmarks: Vec<ReviewShortcutCapturePayload>,
+    favorites: Vec<ReviewShortcutCapturePayload>,
+    tags: Vec<ReviewTagShortcutPayload>,
+}
+
+enum CaptureRunResult {
+    Captured,
+    CapturedWithPolicy(CaptureSuppressedEventPayload),
+    Suppressed(CaptureSuppressedEventPayload),
 }
 
 #[derive(Serialize)]
@@ -475,7 +600,13 @@ fn initialize_database(conn: &Connection) -> Result<(), String> {
             storage_cap_gb REAL NOT NULL,
             is_paused INTEGER NOT NULL,
             startup_on_boot INTEGER NOT NULL DEFAULT 0,
-            theme_id TEXT NOT NULL DEFAULT ''
+            theme_id TEXT NOT NULL DEFAULT '',
+            excluded_processes TEXT NOT NULL DEFAULT '[]',
+            excluded_window_keywords TEXT NOT NULL DEFAULT '[]',
+            pause_processes TEXT NOT NULL DEFAULT '[]',
+            pause_window_keywords TEXT NOT NULL DEFAULT '[]',
+            sensitive_window_keywords TEXT NOT NULL DEFAULT '[]',
+            sensitive_capture_mode TEXT NOT NULL DEFAULT 'skip'
         );
 
         CREATE TABLE IF NOT EXISTS captures (
@@ -499,8 +630,18 @@ fn initialize_database(conn: &Connection) -> Result<(), String> {
             FOREIGN KEY(capture_id) REFERENCES captures(id)
         );
 
+        CREATE TABLE IF NOT EXISTS capture_annotations (
+            capture_id INTEGER PRIMARY KEY,
+            is_bookmarked INTEGER NOT NULL DEFAULT 0,
+            is_favorite INTEGER NOT NULL DEFAULT 0,
+            tags TEXT NOT NULL DEFAULT '[]',
+            FOREIGN KEY(capture_id) REFERENCES captures(id)
+        );
+
         CREATE INDEX IF NOT EXISTS idx_captures_day_time ON captures(day_key, captured_at);
         CREATE INDEX IF NOT EXISTS idx_capture_search_status ON capture_search_index(ocr_status);
+        CREATE INDEX IF NOT EXISTS idx_capture_annotations_bookmarked ON capture_annotations(is_bookmarked);
+        CREATE INDEX IF NOT EXISTS idx_capture_annotations_favorite ON capture_annotations(is_favorite);
         ",
     )
     .map_err(|error| format!("failed to initialize database schema: {error}"))?;
@@ -518,6 +659,30 @@ fn initialize_database(conn: &Connection) -> Result<(), String> {
     // Support existing databases created before theme persistence was introduced.
     let _ = conn.execute(
         "ALTER TABLE settings ADD COLUMN theme_id TEXT NOT NULL DEFAULT ''",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE settings ADD COLUMN excluded_processes TEXT NOT NULL DEFAULT '[]'",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE settings ADD COLUMN excluded_window_keywords TEXT NOT NULL DEFAULT '[]'",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE settings ADD COLUMN pause_processes TEXT NOT NULL DEFAULT '[]'",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE settings ADD COLUMN pause_window_keywords TEXT NOT NULL DEFAULT '[]'",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE settings ADD COLUMN sensitive_window_keywords TEXT NOT NULL DEFAULT '[]'",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE settings ADD COLUMN sensitive_capture_mode TEXT NOT NULL DEFAULT 'skip'",
         [],
     );
 
@@ -559,10 +724,37 @@ fn initialize_database(conn: &Connection) -> Result<(), String> {
         [],
     );
 
+    let _ = conn.execute(
+        "ALTER TABLE capture_annotations ADD COLUMN is_bookmarked INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE capture_annotations ADD COLUMN is_favorite INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE capture_annotations ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'",
+        [],
+    );
+
     conn.execute(
         "
-        INSERT INTO settings (id, interval_minutes, retention_days, storage_cap_gb, is_paused, startup_on_boot, theme_id)
-        VALUES (1, ?, ?, ?, 0, 0, '')
+        INSERT INTO settings (
+            id,
+            interval_minutes,
+            retention_days,
+            storage_cap_gb,
+            is_paused,
+            startup_on_boot,
+            theme_id,
+            excluded_processes,
+            excluded_window_keywords,
+            pause_processes,
+            pause_window_keywords,
+            sensitive_window_keywords,
+            sensitive_capture_mode
+        )
+        VALUES (1, ?, ?, ?, 0, 0, '', '[]', '[]', '[]', '[]', '[]', 'skip')
         ON CONFLICT(id) DO NOTHING
         ",
         params![
@@ -609,6 +801,21 @@ fn initialize_database(conn: &Connection) -> Result<(), String> {
     )
     .map_err(|error| format!("failed to seed capture search index rows: {error}"))?;
 
+    conn.execute(
+        "
+        INSERT INTO capture_annotations (capture_id, is_bookmarked, is_favorite, tags)
+        SELECT captures.id, 0, 0, '[]'
+        FROM captures
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM capture_annotations
+            WHERE capture_annotations.capture_id = captures.id
+        )
+        ",
+        [],
+    )
+    .map_err(|error| format!("failed to seed capture annotation rows: {error}"))?;
+
     Ok(())
 }
 
@@ -629,7 +836,19 @@ fn read_settings(conn: &Connection) -> Result<Settings, String> {
     let mut stmt = conn
         .prepare(
             "
-            SELECT interval_minutes, retention_days, storage_cap_gb, is_paused, startup_on_boot, theme_id
+            SELECT
+                interval_minutes,
+                retention_days,
+                storage_cap_gb,
+                is_paused,
+                startup_on_boot,
+                theme_id,
+                excluded_processes,
+                excluded_window_keywords,
+                pause_processes,
+                pause_window_keywords,
+                sensitive_window_keywords,
+                sensitive_capture_mode
             FROM settings
             WHERE id = 1
             ",
@@ -645,6 +864,32 @@ fn read_settings(conn: &Connection) -> Result<Settings, String> {
                 is_paused: row.get::<_, i64>(3)? != 0,
                 startup_on_boot: row.get::<_, i64>(4)? != 0,
                 theme_id: row.get(5)?,
+                excluded_processes: parse_string_list_json(
+                    &row.get::<_, String>(6)?,
+                    MAX_RULE_ENTRIES,
+                    MAX_RULE_ENTRY_LEN,
+                ),
+                excluded_window_keywords: parse_string_list_json(
+                    &row.get::<_, String>(7)?,
+                    MAX_RULE_ENTRIES,
+                    MAX_RULE_ENTRY_LEN,
+                ),
+                pause_processes: parse_string_list_json(
+                    &row.get::<_, String>(8)?,
+                    MAX_RULE_ENTRIES,
+                    MAX_RULE_ENTRY_LEN,
+                ),
+                pause_window_keywords: parse_string_list_json(
+                    &row.get::<_, String>(9)?,
+                    MAX_RULE_ENTRIES,
+                    MAX_RULE_ENTRY_LEN,
+                ),
+                sensitive_window_keywords: parse_string_list_json(
+                    &row.get::<_, String>(10)?,
+                    MAX_RULE_ENTRIES,
+                    MAX_RULE_ENTRY_LEN,
+                ),
+                sensitive_capture_mode: SensitiveCaptureMode::from_raw(&row.get::<_, String>(11)?),
             })
         })
         .map_err(|error| format!("failed to read settings: {error}"))?;
@@ -656,7 +901,19 @@ fn write_settings(conn: &Connection, settings: &Settings) -> Result<(), String> 
     conn.execute(
         "
         UPDATE settings
-        SET interval_minutes = ?, retention_days = ?, storage_cap_gb = ?, is_paused = ?, startup_on_boot = ?, theme_id = ?
+        SET
+            interval_minutes = ?,
+            retention_days = ?,
+            storage_cap_gb = ?,
+            is_paused = ?,
+            startup_on_boot = ?,
+            theme_id = ?,
+            excluded_processes = ?,
+            excluded_window_keywords = ?,
+            pause_processes = ?,
+            pause_window_keywords = ?,
+            sensitive_window_keywords = ?,
+            sensitive_capture_mode = ?
         WHERE id = 1
         ",
         params![
@@ -665,12 +922,160 @@ fn write_settings(conn: &Connection, settings: &Settings) -> Result<(), String> 
             settings.storage_cap_gb,
             if settings.is_paused { 1 } else { 0 },
             if settings.startup_on_boot { 1 } else { 0 },
-            settings.theme_id
+            settings.theme_id,
+            encode_string_list_json(
+                &settings.excluded_processes,
+                MAX_RULE_ENTRIES,
+                MAX_RULE_ENTRY_LEN,
+            ),
+            encode_string_list_json(
+                &settings.excluded_window_keywords,
+                MAX_RULE_ENTRIES,
+                MAX_RULE_ENTRY_LEN,
+            ),
+            encode_string_list_json(
+                &settings.pause_processes,
+                MAX_RULE_ENTRIES,
+                MAX_RULE_ENTRY_LEN,
+            ),
+            encode_string_list_json(
+                &settings.pause_window_keywords,
+                MAX_RULE_ENTRIES,
+                MAX_RULE_ENTRY_LEN,
+            ),
+            encode_string_list_json(
+                &settings.sensitive_window_keywords,
+                MAX_RULE_ENTRIES,
+                MAX_RULE_ENTRY_LEN,
+            ),
+            settings.sensitive_capture_mode.as_str(),
         ],
     )
     .map_err(|error| format!("failed to write settings: {error}"))?;
 
     Ok(())
+}
+
+fn ensure_capture_annotation_row(conn: &Connection, capture_id: i64) -> Result<(), String> {
+    conn.execute(
+        "
+        INSERT INTO capture_annotations (capture_id, is_bookmarked, is_favorite, tags)
+        VALUES (?, 0, 0, '[]')
+        ON CONFLICT(capture_id) DO NOTHING
+        ",
+        params![capture_id],
+    )
+    .map_err(|error| format!("failed to ensure capture annotation row: {error}"))?;
+
+    Ok(())
+}
+
+fn read_capture_annotation_state(
+    conn: &Connection,
+    capture_id: i64,
+) -> Result<(bool, bool, Vec<String>), String> {
+    ensure_capture_annotation_row(conn, capture_id)?;
+
+    conn.query_row(
+        "SELECT is_bookmarked, is_favorite, tags FROM capture_annotations WHERE capture_id = ?",
+        params![capture_id],
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)? != 0,
+                row.get::<_, i64>(1)? != 0,
+                parse_string_list_json(
+                    &row.get::<_, String>(2).unwrap_or_else(|_| "[]".to_string()),
+                    MAX_TAG_ENTRIES,
+                    MAX_TAG_ENTRY_LEN,
+                ),
+            ))
+        },
+    )
+    .map_err(|error| format!("failed to read capture annotation state: {error}"))
+}
+
+fn match_keyword(haystack_lower: &str, keywords: &[String]) -> Option<String> {
+    for keyword in keywords {
+        let normalized = normalize_list_entry(keyword, MAX_RULE_ENTRY_LEN)
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if normalized.is_empty() {
+            continue;
+        }
+
+        if haystack_lower.contains(normalized.as_str()) {
+            return Some(normalized);
+        }
+    }
+
+    None
+}
+
+fn evaluate_capture_policy(
+    settings: &Settings,
+    window_title: &str,
+    process_name: &str,
+) -> Option<CaptureSuppressedEventPayload> {
+    let window_lower = window_title.to_ascii_lowercase();
+    let process_lower = process_name.to_ascii_lowercase();
+
+    if let Some(hit) = match_keyword(&process_lower, &settings.pause_processes) {
+        return Some(CaptureSuppressedEventPayload {
+            mode: "pause".to_string(),
+            reason: format!("Auto-paused by app pause rule: {hit}"),
+            captured: false,
+        });
+    }
+
+    if let Some(hit) = match_keyword(&window_lower, &settings.pause_window_keywords) {
+        return Some(CaptureSuppressedEventPayload {
+            mode: "pause".to_string(),
+            reason: format!("Auto-paused by window pause rule: {hit}"),
+            captured: false,
+        });
+    }
+
+    if let Some(hit) = match_keyword(&process_lower, &settings.excluded_processes) {
+        return Some(CaptureSuppressedEventPayload {
+            mode: "skip".to_string(),
+            reason: format!("Capture skipped by app exclusion: {hit}"),
+            captured: false,
+        });
+    }
+
+    if let Some(hit) = match_keyword(&window_lower, &settings.excluded_window_keywords) {
+        return Some(CaptureSuppressedEventPayload {
+            mode: "skip".to_string(),
+            reason: format!("Capture skipped by window exclusion: {hit}"),
+            captured: false,
+        });
+    }
+
+    let sensitive_hit = match_keyword(&window_lower, &settings.sensitive_window_keywords)
+        .or_else(|| match_keyword(&process_lower, &settings.sensitive_window_keywords));
+
+    if let Some(hit) = sensitive_hit {
+        let payload = match settings.sensitive_capture_mode {
+            SensitiveCaptureMode::Skip => CaptureSuppressedEventPayload {
+                mode: "skip".to_string(),
+                reason: format!("Sensitive context skipped: {hit}"),
+                captured: false,
+            },
+            SensitiveCaptureMode::Redact => CaptureSuppressedEventPayload {
+                mode: "redact".to_string(),
+                reason: format!("Sensitive context redacted: {hit}"),
+                captured: true,
+            },
+            SensitiveCaptureMode::Pause => CaptureSuppressedEventPayload {
+                mode: "pause".to_string(),
+                reason: format!("Sensitive context auto-paused capture: {hit}"),
+                captured: false,
+            },
+        };
+        return Some(payload);
+    }
+
+    None
 }
 
 fn with_connection<T>(state: &SharedState, f: impl FnOnce(&Connection) -> Result<T, String>) -> Result<T, String> {
@@ -736,6 +1141,45 @@ fn collapse_whitespace(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+fn normalize_list_entry(raw: &str, max_len: usize) -> Option<String> {
+    let normalized = collapse_whitespace(raw.trim());
+    if normalized.is_empty() {
+        return None;
+    }
+
+    Some(normalized.chars().take(max_len).collect::<String>())
+}
+
+fn normalize_string_list(raw_values: &[String], max_items: usize, max_len: usize) -> Vec<String> {
+    let mut seen = HashSet::<String>::new();
+    let mut values = Vec::<String>::new();
+
+    for value in raw_values {
+        if let Some(entry) = normalize_list_entry(value, max_len) {
+            let key = entry.to_ascii_lowercase();
+            if seen.insert(key) {
+                values.push(entry);
+            }
+        }
+
+        if values.len() >= max_items {
+            break;
+        }
+    }
+
+    values
+}
+
+fn parse_string_list_json(raw_json: &str, max_items: usize, max_len: usize) -> Vec<String> {
+    let parsed = serde_json::from_str::<Vec<String>>(raw_json).unwrap_or_default();
+    normalize_string_list(&parsed, max_items, max_len)
+}
+
+fn encode_string_list_json(values: &[String], max_items: usize, max_len: usize) -> String {
+    serde_json::to_string(&normalize_string_list(values, max_items, max_len))
+        .unwrap_or_else(|_| "[]".to_string())
+}
+
 fn parse_clock_minutes(token: &str, next_token: Option<&str>) -> Option<i64> {
     let mut normalized = token
         .trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != ':')
@@ -792,6 +1236,12 @@ fn parse_clock_minutes(token: &str, next_token: Option<&str>) -> Option<i64> {
 fn normalize_token(token: &str) -> String {
     token
         .trim_matches(|c: char| !c.is_ascii_alphanumeric())
+        .to_ascii_lowercase()
+}
+
+fn normalize_query_word(token: &str) -> String {
+    token
+        .trim_matches(|c: char| !(c.is_ascii_alphanumeric() || [':', '-', '_', '.'].contains(&c)))
         .to_ascii_lowercase()
 }
 
@@ -861,23 +1311,68 @@ fn parse_retrieval_query_parts(query: &str) -> RetrievalQueryParts {
 
     let words = outside
         .split_whitespace()
-        .map(normalize_token)
+        .map(normalize_query_word)
         .filter(|token| token.len() >= 2)
         .collect::<Vec<_>>();
 
-    // Treat plain multi-word queries as an implied phrase so space-containing
-    // searches can match contiguous OCR/note text without requiring quotes.
-    if words.len() >= 2 {
-        phrases.push(words.join(" "));
-    }
-
     let stopwords = stopwords();
     let mut terms = Vec::<String>::new();
+    let mut words_for_phrase = Vec::<String>::new();
+    let mut app_terms = Vec::<String>::new();
+    let mut window_terms = Vec::<String>::new();
+    let mut tag_terms = Vec::<String>::new();
+    let mut require_bookmarked = false;
+    let mut require_favorite = false;
 
     for token in words {
-        if !stopwords.contains(token.as_str()) {
-            terms.push(token);
+        match token.as_str() {
+            "bookmark" | "bookmarked" => {
+                require_bookmarked = true;
+                continue;
+            }
+            "favorite" | "favourite" | "favorited" | "favourited" => {
+                require_favorite = true;
+                continue;
+            }
+            _ => {}
         }
+
+        if let Some(value) = token.strip_prefix("app:") {
+            if let Some(normalized) = normalize_list_entry(value, MAX_RULE_ENTRY_LEN) {
+                app_terms.push(normalized.to_ascii_lowercase());
+            }
+            continue;
+        }
+
+        if let Some(value) = token.strip_prefix("window:") {
+            if let Some(normalized) = normalize_list_entry(value, MAX_RULE_ENTRY_LEN) {
+                window_terms.push(normalized.to_ascii_lowercase());
+            }
+            continue;
+        }
+
+        if let Some(value) = token.strip_prefix("tag:") {
+            if let Some(normalized) = normalize_list_entry(value, MAX_TAG_ENTRY_LEN) {
+                tag_terms.push(normalized.to_ascii_lowercase());
+            }
+            continue;
+        }
+
+        let normalized = normalize_token(&token);
+        if normalized.len() < 2 {
+            continue;
+        }
+
+        words_for_phrase.push(normalized.clone());
+        if !stopwords.contains(normalized.as_str()) {
+            terms.push(normalized);
+        }
+    }
+
+    // Treat plain multi-word queries as an implied phrase so space-containing
+    // searches can match contiguous OCR/note text without requiring quotes.
+    if words_for_phrase.len() >= 2 {
+        phrases.push(words_for_phrase.join(" "));
     }
 
     let mut seen = HashSet::<String>::new();
@@ -896,9 +1391,38 @@ fn parse_retrieval_query_parts(query: &str) -> RetrievalQueryParts {
         }
     }
 
+    seen.clear();
+    let mut deduped_app_terms = Vec::<String>::new();
+    for term in app_terms {
+        if seen.insert(term.clone()) {
+            deduped_app_terms.push(term);
+        }
+    }
+
+    seen.clear();
+    let mut deduped_window_terms = Vec::<String>::new();
+    for term in window_terms {
+        if seen.insert(term.clone()) {
+            deduped_window_terms.push(term);
+        }
+    }
+
+    seen.clear();
+    let mut deduped_tag_terms = Vec::<String>::new();
+    for term in tag_terms {
+        if seen.insert(term.clone()) {
+            deduped_tag_terms.push(term);
+        }
+    }
+
     RetrievalQueryParts {
         phrases: deduped_phrases,
         terms: deduped_terms,
+        app_terms: deduped_app_terms,
+        window_terms: deduped_window_terms,
+        tag_terms: deduped_tag_terms,
+        require_bookmarked,
+        require_favorite,
     }
 }
 
@@ -920,6 +1444,12 @@ fn settings_to_payload(settings: Settings) -> SettingsPayload {
         startup_on_boot: settings.startup_on_boot,
         startup_on_boot_supported: startup_on_boot_supported(),
         theme_id: settings.theme_id,
+        excluded_processes: settings.excluded_processes,
+        excluded_window_keywords: settings.excluded_window_keywords,
+        pause_processes: settings.pause_processes,
+        pause_window_keywords: settings.pause_window_keywords,
+        sensitive_window_keywords: settings.sensitive_window_keywords,
+        sensitive_capture_mode: settings.sensitive_capture_mode.as_str().to_string(),
     }
 }
 
@@ -1433,6 +1963,9 @@ fn build_retrieval_snippet(
     ocr_text: &str,
     window_title: &str,
     process_name: &str,
+    tags: &[String],
+    is_bookmarked: bool,
+    is_favorite: bool,
     query_parts: &RetrievalQueryParts,
     fallback_reason: &str,
 ) -> IndexedTextBundle {
@@ -1480,6 +2013,17 @@ fn build_retrieval_snippet(
                 highlight_terms: vec![probe.to_string()],
             };
         }
+
+        for tag in tags {
+            let tag_lower = tag.to_ascii_lowercase();
+            if tag_lower.contains(probe) {
+                return IndexedTextBundle {
+                    snippet: format!("Tag: {}", collapse_whitespace(tag)),
+                    source: "tag".to_string(),
+                    highlight_terms: vec![probe.to_string()],
+                };
+            }
+        }
     }
 
     if !note.trim().is_empty() {
@@ -1511,6 +2055,29 @@ fn build_retrieval_snippet(
         return IndexedTextBundle {
             snippet: format!("App: {}", collapse_whitespace(process_name)),
             source: "window".to_string(),
+            highlight_terms: Vec::new(),
+        };
+    }
+
+    if !tags.is_empty() {
+        return IndexedTextBundle {
+            snippet: format!("Tags: {}", tags.join(", ")),
+            source: "tag".to_string(),
+            highlight_terms: Vec::new(),
+        };
+    }
+
+    if is_bookmarked || is_favorite {
+        let label = match (is_bookmarked, is_favorite) {
+            (true, true) => "Bookmarked and favorited capture",
+            (true, false) => "Bookmarked capture",
+            (false, true) => "Favorited capture",
+            _ => fallback_reason,
+        };
+
+        return IndexedTextBundle {
+            snippet: label.to_string(),
+            source: "metadata".to_string(),
             highlight_terms: Vec::new(),
         };
     }
@@ -1902,6 +2469,12 @@ fn delete_day_internal(state: &SharedState, day_key: &str) -> Result<DeleteDayPa
         )
         .map_err(|error| format!("failed to delete day search index rows: {error}"))?;
 
+        conn.execute(
+            "DELETE FROM capture_annotations WHERE capture_id IN (SELECT id FROM captures WHERE day_key = ?)",
+            params![day_key],
+        )
+        .map_err(|error| format!("failed to delete day capture annotation rows: {error}"))?;
+
         let removed = conn
             .execute("DELETE FROM captures WHERE day_key = ?", params![day_key])
             .map_err(|error| format!("failed to delete day captures: {error}"))?;
@@ -1952,6 +2525,12 @@ fn delete_capture_internal(state: &SharedState, capture_id: i64) -> Result<Delet
             params![capture_id],
         )
         .map_err(|error| format!("failed to delete capture search index row: {error}"))?;
+
+        conn.execute(
+            "DELETE FROM capture_annotations WHERE capture_id = ?",
+            params![capture_id],
+        )
+        .map_err(|error| format!("failed to delete capture annotation row: {error}"))?;
 
         conn.execute("DELETE FROM captures WHERE id = ?", params![capture_id])
             .map_err(|error| format!("failed to delete capture row: {error}"))?;
@@ -2066,7 +2645,31 @@ fn apply_retention_rules(state: &SharedState) -> Result<(), String> {
     Ok(())
 }
 
-fn capture_once(state: &SharedState) -> Result<(), String> {
+fn capture_once(state: &SharedState) -> Result<CaptureRunResult, String> {
+    let settings = with_connection(state, read_settings)?;
+    let window_context = capture_foreground_window_metadata();
+    let captured_window_title = window_context.window_title;
+    let captured_process_name = window_context.process_name;
+    let policy_outcome = evaluate_capture_policy(&settings, &captured_window_title, &captured_process_name);
+
+    if let Some(policy) = &policy_outcome {
+        if policy.mode == "skip" {
+            clear_capture_error_state(state);
+            return Ok(CaptureRunResult::Suppressed(policy.clone()));
+        }
+
+        if policy.mode == "pause" {
+            set_pause_internal(state, true)?;
+            clear_capture_error_state(state);
+            return Ok(CaptureRunResult::Suppressed(policy.clone()));
+        }
+    }
+
+    let redact_capture = policy_outcome
+        .as_ref()
+        .map(|payload| payload.mode == "redact")
+        .unwrap_or(false);
+
     let screen = Screen::all()
         .map_err(|error| format!("failed to list displays: {error}"))?
         .into_iter()
@@ -2079,9 +2682,8 @@ fn capture_once(state: &SharedState) -> Result<(), String> {
 
     let now = Local::now();
     let day_key = now.format("%Y-%m-%d").to_string();
-    let window_context = capture_foreground_window_metadata();
-    let window_title = window_context.window_title;
-    let process_name = window_context.process_name;
+    let mut window_title = captured_window_title.clone();
+    let mut process_name = captured_process_name.clone();
     let day_dir = state.capture_dir.join(&day_key);
 
     fs::create_dir_all(&day_dir)
@@ -2090,7 +2692,26 @@ fn capture_once(state: &SharedState) -> Result<(), String> {
     let stem = now.format("%Y%m%d_%H%M%S_%3f").to_string();
     let image_path = day_dir.join(format!("{stem}.jpg"));
     let thumbnail_path = day_dir.join(format!("{stem}_thumb.jpg"));
-    let full_image = image::DynamicImage::ImageRgba8(screenshot.clone());
+    let full_image = if redact_capture {
+        image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            screenshot.width(),
+            screenshot.height(),
+            image::Rgba([8, 8, 8, 255]),
+        ))
+    } else {
+        image::DynamicImage::ImageRgba8(screenshot.clone())
+    };
+
+    if redact_capture {
+        window_title = "[redacted]".to_string();
+        process_name = "[redacted]".to_string();
+    }
+
+    let capture_note = if redact_capture {
+        "[redacted by sensitive capture policy]".to_string()
+    } else {
+        String::new()
+    };
 
     {
         let file = File::create(&image_path)
@@ -2134,9 +2755,9 @@ fn capture_once(state: &SharedState) -> Result<(), String> {
                 now.to_rfc3339(),
                 image_path.to_string_lossy().to_string(),
                 thumbnail_path.to_string_lossy().to_string(),
-                "",
-                window_title,
-                process_name,
+                &capture_note,
+                &window_title,
+                &process_name,
                 screenshot.width() as i64,
                 screenshot.height() as i64
             ],
@@ -2144,14 +2765,15 @@ fn capture_once(state: &SharedState) -> Result<(), String> {
         .map_err(|error| format!("failed to persist capture metadata: {error}"))?;
 
         let inserted_capture_id = conn.last_insert_rowid();
+        ensure_capture_annotation_row(conn, inserted_capture_id)?;
         refresh_capture_search_index(
             conn,
             inserted_capture_id,
-            "",
+            &capture_note,
             "",
             &window_title,
             &process_name,
-            "pending",
+            if redact_capture { "redacted" } else { "pending" },
             None,
             None,
         )?;
@@ -2161,11 +2783,18 @@ fn capture_once(state: &SharedState) -> Result<(), String> {
 
     bump_indexing_epoch(state);
 
-    schedule_capture_index(state.clone(), capture_id);
+    if !redact_capture {
+        schedule_capture_index(state.clone(), capture_id);
+    }
 
     apply_retention_rules(state)?;
     clear_capture_error_state(state);
-    Ok(())
+
+    if let Some(payload) = policy_outcome {
+        Ok(CaptureRunResult::CapturedWithPolicy(payload))
+    } else {
+        Ok(CaptureRunResult::Captured)
+    }
 }
 
 fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
@@ -2199,8 +2828,21 @@ fn start_capture_worker(app: AppHandle, state: SharedState) {
 
                 if !current_settings.is_paused {
                     match capture_once(&state) {
-                        Ok(()) => {
+                        Ok(CaptureRunResult::Captured) => {
                             let _ = app.emit("captures-updated", ());
+                        }
+                        Ok(CaptureRunResult::CapturedWithPolicy(payload)) => {
+                            let _ = app.emit("captures-updated", ());
+                            if payload.mode == "pause" {
+                                let _ = app.emit("pause-state-changed", PauseStatePayload { is_paused: true });
+                            }
+                            let _ = app.emit("capture-suppressed", payload);
+                        }
+                        Ok(CaptureRunResult::Suppressed(payload)) => {
+                            if payload.mode == "pause" {
+                                let _ = app.emit("pause-state-changed", PauseStatePayload { is_paused: true });
+                            }
+                            let _ = app.emit("capture-suppressed", payload);
                         }
                         Err(error) => {
                             let payload = record_capture_error(&state, error);
@@ -2281,8 +2923,21 @@ fn setup_tray(app: &AppHandle) -> Result<(), String> {
             "capture_now" => {
                 let state = app.state::<SharedState>();
                 match capture_once(&state) {
-                    Ok(()) => {
+                    Ok(CaptureRunResult::Captured) => {
                         let _ = app.emit("captures-updated", ());
+                    }
+                    Ok(CaptureRunResult::CapturedWithPolicy(payload)) => {
+                        let _ = app.emit("captures-updated", ());
+                        if payload.mode == "pause" {
+                            let _ = app.emit("pause-state-changed", PauseStatePayload { is_paused: true });
+                        }
+                        let _ = app.emit("capture-suppressed", payload);
+                    }
+                    Ok(CaptureRunResult::Suppressed(payload)) => {
+                        if payload.mode == "pause" {
+                            let _ = app.emit("pause-state-changed", PauseStatePayload { is_paused: true });
+                        }
+                        let _ = app.emit("capture-suppressed", payload);
                     }
                     Err(error) => {
                         let payload = record_capture_error(&state, error);
@@ -2339,6 +2994,12 @@ fn update_settings(
     retention_days: Option<i64>,
     storage_cap_gb: Option<f64>,
     theme_id: Option<String>,
+    excluded_processes: Option<Vec<String>>,
+    excluded_window_keywords: Option<Vec<String>>,
+    pause_processes: Option<Vec<String>>,
+    pause_window_keywords: Option<Vec<String>>,
+    sensitive_window_keywords: Option<Vec<String>>,
+    sensitive_capture_mode: Option<String>,
 ) -> Result<SettingsPayload, String> {
     let updated = with_connection(&state, |conn| {
         let mut settings = read_settings(conn)?;
@@ -2357,6 +3018,35 @@ fn update_settings(
 
         if let Some(theme) = theme_id {
             settings.theme_id = normalize_theme_id(&theme)?;
+        }
+
+        if let Some(values) = excluded_processes {
+            settings.excluded_processes =
+                normalize_string_list(&values, MAX_RULE_ENTRIES, MAX_RULE_ENTRY_LEN);
+        }
+
+        if let Some(values) = excluded_window_keywords {
+            settings.excluded_window_keywords =
+                normalize_string_list(&values, MAX_RULE_ENTRIES, MAX_RULE_ENTRY_LEN);
+        }
+
+        if let Some(values) = pause_processes {
+            settings.pause_processes =
+                normalize_string_list(&values, MAX_RULE_ENTRIES, MAX_RULE_ENTRY_LEN);
+        }
+
+        if let Some(values) = pause_window_keywords {
+            settings.pause_window_keywords =
+                normalize_string_list(&values, MAX_RULE_ENTRIES, MAX_RULE_ENTRY_LEN);
+        }
+
+        if let Some(values) = sensitive_window_keywords {
+            settings.sensitive_window_keywords =
+                normalize_string_list(&values, MAX_RULE_ENTRIES, MAX_RULE_ENTRY_LEN);
+        }
+
+        if let Some(mode) = sensitive_capture_mode {
+            settings.sensitive_capture_mode = SensitiveCaptureMode::from_raw(&mode);
         }
 
         write_settings(conn, &settings)?;
@@ -2435,9 +3125,29 @@ fn get_pause_state(state: State<SharedState>) -> PauseStatePayload {
 #[tauri::command]
 fn capture_now(state: State<SharedState>, app: AppHandle) -> Result<(), String> {
     match capture_once(&state) {
-        Ok(()) => {
+        Ok(CaptureRunResult::Captured) => {
             app.emit("captures-updated", ())
                 .map_err(|error| format!("failed to emit capture update event: {error}"))?;
+            Ok(())
+        }
+        Ok(CaptureRunResult::CapturedWithPolicy(payload)) => {
+            app.emit("captures-updated", ())
+                .map_err(|error| format!("failed to emit capture update event: {error}"))?;
+            if payload.mode == "pause" {
+                app.emit("pause-state-changed", PauseStatePayload { is_paused: true })
+                    .map_err(|error| format!("failed to emit pause state event: {error}"))?;
+            }
+            app.emit("capture-suppressed", payload)
+                .map_err(|error| format!("failed to emit capture suppression event: {error}"))?;
+            Ok(())
+        }
+        Ok(CaptureRunResult::Suppressed(payload)) => {
+            if payload.mode == "pause" {
+                app.emit("pause-state-changed", PauseStatePayload { is_paused: true })
+                    .map_err(|error| format!("failed to emit pause state event: {error}"))?;
+            }
+            app.emit("capture-suppressed", payload)
+                .map_err(|error| format!("failed to emit capture suppression event: {error}"))?;
             Ok(())
         }
         Err(error) => {
@@ -2528,11 +3238,15 @@ fn load_day_captures_page(
                     captures.capture_note,
                     captures.window_title,
                     captures.process_name,
+                    COALESCE(capture_annotations.is_bookmarked, 0),
+                    COALESCE(capture_annotations.is_favorite, 0),
+                    COALESCE(capture_annotations.tags, '[]'),
                     captures.width,
                     captures.height,
                     COALESCE(capture_search_index.ocr_text, '')
                 FROM captures
                 LEFT JOIN capture_search_index ON capture_search_index.capture_id = captures.id
+                LEFT JOIN capture_annotations ON capture_annotations.capture_id = captures.id
                 WHERE captures.day_key = ?
                 ORDER BY captures.captured_at ASC
                 LIMIT ? OFFSET ?
@@ -2551,9 +3265,12 @@ fn load_day_captures_page(
                     row.get::<_, String>(5)?,
                     row.get::<_, String>(6)?,
                     row.get::<_, String>(7)?,
-                    row.get::<_, i64>(8)?,
-                    row.get::<_, i64>(9)?,
-                    row.get::<_, String>(10)?,
+                    row.get::<_, i64>(8)? != 0,
+                    row.get::<_, i64>(9)? != 0,
+                    parse_string_list_json(&row.get::<_, String>(10)?, MAX_TAG_ENTRIES, MAX_TAG_ENTRY_LEN),
+                    row.get::<_, i64>(11)?,
+                    row.get::<_, i64>(12)?,
+                    row.get::<_, String>(13)?,
                 ))
             })
             .map_err(|error| format!("failed to run day captures query: {error}"))?;
@@ -2570,6 +3287,9 @@ fn load_day_captures_page(
                 capture_note,
                 window_title,
                 process_name,
+                is_bookmarked,
+                is_favorite,
+                tags,
                 width,
                 height,
                 ocr_text,
@@ -2584,6 +3304,9 @@ fn load_day_captures_page(
                 capture_note,
                 window_title,
                 process_name,
+                is_bookmarked,
+                is_favorite,
+                tags,
                 width,
                 height,
                 ocr_text,
@@ -2604,6 +3327,9 @@ fn load_day_captures_page(
         capture_note,
         window_title,
         process_name,
+        is_bookmarked,
+        is_favorite,
+        tags,
         width,
         height,
         ocr_text,
@@ -2622,6 +3348,9 @@ fn load_day_captures_page(
             ocr_text,
             window_title,
             process_name,
+            is_bookmarked,
+            is_favorite,
+            tags,
             width,
             height,
         });
@@ -2661,8 +3390,17 @@ fn search_captures(
     let time_hint = parse_retrieval_time_hint(&normalized_query);
     let query_parts = parse_retrieval_query_parts(&normalized_query);
     let has_text_query = !query_parts.terms.is_empty() || !query_parts.phrases.is_empty();
+    let has_structured_filters = !query_parts.app_terms.is_empty()
+        || !query_parts.window_terms.is_empty()
+        || !query_parts.tag_terms.is_empty()
+        || query_parts.require_bookmarked
+        || query_parts.require_favorite;
 
-    if !has_text_query && time_hint.target_minutes.is_none() && time_hint.day_key.is_none() {
+    if !has_text_query
+        && !has_structured_filters
+        && time_hint.target_minutes.is_none()
+        && time_hint.day_key.is_none()
+    {
         return Ok(Vec::new());
     }
 
@@ -2676,9 +3414,13 @@ fn search_captures(
                 captures.capture_note,
                 captures.window_title,
                 captures.process_name,
-                COALESCE(capture_search_index.ocr_text, '')
+                COALESCE(capture_search_index.ocr_text, ''),
+                COALESCE(capture_annotations.is_bookmarked, 0),
+                COALESCE(capture_annotations.is_favorite, 0),
+                COALESCE(capture_annotations.tags, '[]')
             FROM captures
             LEFT JOIN capture_search_index ON capture_search_index.capture_id = captures.id
+            LEFT JOIN capture_annotations ON capture_annotations.capture_id = captures.id
             WHERE captures.day_key = ?
             ORDER BY captures.captured_at DESC
             LIMIT 2000
@@ -2692,9 +3434,13 @@ fn search_captures(
                 captures.capture_note,
                 captures.window_title,
                 captures.process_name,
-                COALESCE(capture_search_index.ocr_text, '')
+                COALESCE(capture_search_index.ocr_text, ''),
+                COALESCE(capture_annotations.is_bookmarked, 0),
+                COALESCE(capture_annotations.is_favorite, 0),
+                COALESCE(capture_annotations.tags, '[]')
             FROM captures
             LEFT JOIN capture_search_index ON capture_search_index.capture_id = captures.id
+            LEFT JOIN capture_annotations ON capture_annotations.capture_id = captures.id
             ORDER BY captures.captured_at DESC
             LIMIT 2000
             "
@@ -2717,6 +3463,9 @@ fn search_captures(
                         row.get::<_, String>(4)?,
                         row.get::<_, String>(5)?,
                         row.get::<_, String>(6)?,
+                        row.get::<_, i64>(7)? != 0,
+                        row.get::<_, i64>(8)? != 0,
+                        parse_string_list_json(&row.get::<_, String>(9)?, MAX_TAG_ENTRIES, MAX_TAG_ENTRY_LEN),
                     ))
                 })
                 .map_err(|error| format!("failed to execute day-constrained capture search: {error}"))?;
@@ -2735,6 +3484,9 @@ fn search_captures(
                         row.get::<_, String>(4)?,
                         row.get::<_, String>(5)?,
                         row.get::<_, String>(6)?,
+                        row.get::<_, i64>(7)? != 0,
+                        row.get::<_, i64>(8)? != 0,
+                        parse_string_list_json(&row.get::<_, String>(9)?, MAX_TAG_ENTRIES, MAX_TAG_ENTRY_LEN),
                     ))
                 })
                 .map_err(|error| format!("failed to execute capture search: {error}"))?;
@@ -2749,14 +3501,67 @@ fn search_captures(
 
     let mut results = Vec::<RetrievalSearchResultPayload>::new();
 
-    for (capture_id, day_key, captured_at, capture_note, window_title, process_name, ocr_text) in rows {
+    for (
+        capture_id,
+        day_key,
+        captured_at,
+        capture_note,
+        window_title,
+        process_name,
+        ocr_text,
+        is_bookmarked,
+        is_favorite,
+        tags,
+    ) in rows
+    {
         let note_lower = capture_note.to_ascii_lowercase();
         let ocr_lower = ocr_text.to_ascii_lowercase();
         let window_lower = window_title.to_ascii_lowercase();
         let process_lower = process_name.to_ascii_lowercase();
+        let tags_lower = tags
+            .iter()
+            .map(|tag| tag.to_ascii_lowercase())
+            .collect::<Vec<_>>();
+        let tags_blob = tags_lower.join(" ");
         let mut score = 0.0;
         let mut reasons = Vec::<String>::new();
         let mut highlight_terms = HashSet::<String>::new();
+
+        if query_parts.require_bookmarked && !is_bookmarked {
+            continue;
+        }
+
+        if query_parts.require_favorite && !is_favorite {
+            continue;
+        }
+
+        let app_filter_hits = query_parts
+            .app_terms
+            .iter()
+            .filter(|term| process_lower.contains(term.as_str()) || window_lower.contains(term.as_str()))
+            .count() as i64;
+        let window_filter_hits = query_parts
+            .window_terms
+            .iter()
+            .filter(|term| window_lower.contains(term.as_str()))
+            .count() as i64;
+        let tag_filter_hits = query_parts
+            .tag_terms
+            .iter()
+            .filter(|term| tags_blob.contains(term.as_str()))
+            .count() as i64;
+
+        if !query_parts.app_terms.is_empty() && app_filter_hits == 0 {
+            continue;
+        }
+
+        if !query_parts.window_terms.is_empty() && window_filter_hits == 0 {
+            continue;
+        }
+
+        if !query_parts.tag_terms.is_empty() && tag_filter_hits == 0 {
+            continue;
+        }
 
         let note_phrase_hits = query_parts
             .phrases
@@ -2808,7 +3613,7 @@ fn search_captures(
             + process_term_hits;
 
         if has_text_query {
-            if total_text_hits == 0 && time_hint.target_minutes.is_none() {
+            if total_text_hits == 0 && time_hint.target_minutes.is_none() && !has_structured_filters {
                 continue;
             }
 
@@ -2868,6 +3673,54 @@ fn search_captures(
             }
         }
 
+        if app_filter_hits > 0 {
+            score += (app_filter_hits as f64) * 2.4;
+            reasons.push("app".to_string());
+            for term in &query_parts.app_terms {
+                if process_lower.contains(term) || window_lower.contains(term) {
+                    highlight_terms.insert(term.clone());
+                }
+            }
+        }
+
+        if window_filter_hits > 0 {
+            score += (window_filter_hits as f64) * 2.2;
+            reasons.push("window".to_string());
+            for term in &query_parts.window_terms {
+                if window_lower.contains(term) {
+                    highlight_terms.insert(term.clone());
+                }
+            }
+        }
+
+        if tag_filter_hits > 0 {
+            score += (tag_filter_hits as f64) * 2.7;
+            reasons.push("tag".to_string());
+            for term in &query_parts.tag_terms {
+                if tags_blob.contains(term) {
+                    highlight_terms.insert(term.clone());
+                }
+            }
+        }
+
+        if query_parts.require_bookmarked {
+            score += 1.2;
+            reasons.push("bookmark".to_string());
+        }
+
+        if query_parts.require_favorite {
+            score += 1.2;
+            reasons.push("favorite".to_string());
+        }
+
+        if is_bookmarked {
+            score += 0.22;
+        }
+
+        if is_favorite {
+            score += 0.22;
+        }
+
         if let Some(target_minutes) = time_hint.target_minutes {
             let Some(current_minutes) = local_minutes_of_day(&captured_at) else {
                 continue;
@@ -2915,6 +3768,9 @@ fn search_captures(
             &ocr_text,
             &window_title,
             &process_name,
+            &tags,
+            is_bookmarked,
+            is_favorite,
             &query_parts,
             "Matched by capture metadata.",
         );
@@ -2938,6 +3794,9 @@ fn search_captures(
             score,
             snippet_source: snippet_bundle.source,
             highlight_terms,
+            is_bookmarked,
+            is_favorite,
+            tags,
         });
     }
 
@@ -3070,9 +3929,13 @@ fn export_encrypted_backup(state: State<SharedState>, passphrase: String) -> Res
                     COALESCE(capture_search_index.search_text, ''),
                     COALESCE(capture_search_index.ocr_status, 'pending'),
                     capture_search_index.ocr_error,
-                    capture_search_index.indexed_at
+                    capture_search_index.indexed_at,
+                    COALESCE(capture_annotations.is_bookmarked, 0),
+                    COALESCE(capture_annotations.is_favorite, 0),
+                    COALESCE(capture_annotations.tags, '[]')
                 FROM captures
                 LEFT JOIN capture_search_index ON capture_search_index.capture_id = captures.id
+                LEFT JOIN capture_annotations ON capture_annotations.capture_id = captures.id
                 ORDER BY captures.id ASC
                 ",
             )
@@ -3096,6 +3959,9 @@ fn export_encrypted_backup(state: State<SharedState>, passphrase: String) -> Res
                     row.get::<_, String>(12)?,
                     row.get::<_, Option<String>>(13)?,
                     row.get::<_, Option<String>>(14)?,
+                    row.get::<_, i64>(15)? != 0,
+                    row.get::<_, i64>(16)? != 0,
+                    parse_string_list_json(&row.get::<_, String>(17)?, MAX_TAG_ENTRIES, MAX_TAG_ENTRY_LEN),
                 ))
             })
             .map_err(|error| format!("failed to run encrypted backup query: {error}"))?;
@@ -3127,6 +3993,9 @@ fn export_encrypted_backup(state: State<SharedState>, passphrase: String) -> Res
                 ocr_status,
                 ocr_error,
                 indexed_at,
+                is_bookmarked,
+                is_favorite,
+                tags,
             )| {
                 let image_bytes = fs::read(&image_path)
                     .map_err(|error| format!("failed reading capture image for backup {}: {error}", image_path))?;
@@ -3144,6 +4013,9 @@ fn export_encrypted_backup(state: State<SharedState>, passphrase: String) -> Res
                     capture_note,
                     window_title,
                     process_name,
+                    is_bookmarked,
+                    is_favorite,
+                    tags,
                     width,
                     height,
                     relative_image_path: relative_capture_path(
@@ -3180,6 +4052,12 @@ fn export_encrypted_backup(state: State<SharedState>, passphrase: String) -> Res
             is_paused: settings.is_paused,
             startup_on_boot: settings.startup_on_boot,
             theme_id: settings.theme_id,
+            excluded_processes: settings.excluded_processes,
+            excluded_window_keywords: settings.excluded_window_keywords,
+            pause_processes: settings.pause_processes,
+            pause_window_keywords: settings.pause_window_keywords,
+            sensitive_window_keywords: settings.sensitive_window_keywords,
+            sensitive_capture_mode: settings.sensitive_capture_mode.as_str().to_string(),
         },
         captures,
     };
@@ -3266,10 +4144,33 @@ fn import_encrypted_backup(
             .unchecked_transaction()
             .map_err(|error| format!("failed to open backup restore transaction: {error}"))?;
         let restored_theme_id = normalize_theme_id(&bundle.settings.theme_id)?;
+        let restored_sensitive_mode = SensitiveCaptureMode::from_raw(&bundle.settings.sensitive_capture_mode);
+        let restored_excluded_processes =
+            normalize_string_list(&bundle.settings.excluded_processes, MAX_RULE_ENTRIES, MAX_RULE_ENTRY_LEN);
+        let restored_excluded_window_keywords = normalize_string_list(
+            &bundle.settings.excluded_window_keywords,
+            MAX_RULE_ENTRIES,
+            MAX_RULE_ENTRY_LEN,
+        );
+        let restored_pause_processes =
+            normalize_string_list(&bundle.settings.pause_processes, MAX_RULE_ENTRIES, MAX_RULE_ENTRY_LEN);
+        let restored_pause_window_keywords = normalize_string_list(
+            &bundle.settings.pause_window_keywords,
+            MAX_RULE_ENTRIES,
+            MAX_RULE_ENTRY_LEN,
+        );
+        let restored_sensitive_keywords = normalize_string_list(
+            &bundle.settings.sensitive_window_keywords,
+            MAX_RULE_ENTRIES,
+            MAX_RULE_ENTRY_LEN,
+        );
 
         transaction
             .execute("DELETE FROM capture_search_index", [])
             .map_err(|error| format!("failed clearing search index rows during restore: {error}"))?;
+        transaction
+            .execute("DELETE FROM capture_annotations", [])
+            .map_err(|error| format!("failed clearing capture annotation rows during restore: {error}"))?;
         transaction
             .execute("DELETE FROM captures", [])
             .map_err(|error| format!("failed clearing capture rows during restore: {error}"))?;
@@ -3280,8 +4181,22 @@ fn import_encrypted_backup(
         transaction
             .execute(
                 "
-                INSERT INTO settings (id, interval_minutes, retention_days, storage_cap_gb, is_paused, startup_on_boot, theme_id)
-                VALUES (1, ?, ?, ?, ?, ?, ?)
+                INSERT INTO settings (
+                    id,
+                    interval_minutes,
+                    retention_days,
+                    storage_cap_gb,
+                    is_paused,
+                    startup_on_boot,
+                    theme_id,
+                    excluded_processes,
+                    excluded_window_keywords,
+                    pause_processes,
+                    pause_window_keywords,
+                    sensitive_window_keywords,
+                    sensitive_capture_mode
+                )
+                VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ",
                 params![
                     bundle.settings.interval_minutes,
@@ -3289,7 +4204,33 @@ fn import_encrypted_backup(
                     bundle.settings.storage_cap_gb,
                     if bundle.settings.is_paused { 1 } else { 0 },
                     if bundle.settings.startup_on_boot { 1 } else { 0 },
-                    restored_theme_id
+                    restored_theme_id,
+                    encode_string_list_json(
+                        &restored_excluded_processes,
+                        MAX_RULE_ENTRIES,
+                        MAX_RULE_ENTRY_LEN,
+                    ),
+                    encode_string_list_json(
+                        &restored_excluded_window_keywords,
+                        MAX_RULE_ENTRIES,
+                        MAX_RULE_ENTRY_LEN,
+                    ),
+                    encode_string_list_json(
+                        &restored_pause_processes,
+                        MAX_RULE_ENTRIES,
+                        MAX_RULE_ENTRY_LEN,
+                    ),
+                    encode_string_list_json(
+                        &restored_pause_window_keywords,
+                        MAX_RULE_ENTRIES,
+                        MAX_RULE_ENTRY_LEN,
+                    ),
+                    encode_string_list_json(
+                        &restored_sensitive_keywords,
+                        MAX_RULE_ENTRIES,
+                        MAX_RULE_ENTRY_LEN,
+                    ),
+                    restored_sensitive_mode.as_str(),
                 ],
             )
             .map_err(|error| format!("failed restoring settings row: {error}"))?;
@@ -3357,6 +4298,21 @@ fn import_encrypted_backup(
                     ],
                 )
                 .map_err(|error| format!("failed restoring search index row: {error}"))?;
+
+            transaction
+                .execute(
+                    "
+                    INSERT INTO capture_annotations (capture_id, is_bookmarked, is_favorite, tags)
+                    VALUES (?, ?, ?, ?)
+                    ",
+                    params![
+                        capture.id,
+                        if capture.is_bookmarked { 1 } else { 0 },
+                        if capture.is_favorite { 1 } else { 0 },
+                        encode_string_list_json(&capture.tags, MAX_TAG_ENTRIES, MAX_TAG_ENTRY_LEN),
+                    ],
+                )
+                .map_err(|error| format!("failed restoring capture annotation row: {error}"))?;
         }
 
         transaction
@@ -3528,6 +4484,322 @@ fn update_capture_note(
 
     app.emit("captures-updated", ())
         .map_err(|error| format!("failed to emit capture update event: {error}"))?;
+
+    Ok(())
+}
+
+fn redact_image_file(path: &str) -> Result<(), String> {
+    let source = image::open(path).map_err(|error| format!("failed to load image for redaction: {error}"))?;
+    let width = source.width();
+    let height = source.height();
+    let redacted = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+        width,
+        height,
+        image::Rgba([8, 8, 8, 255]),
+    ));
+
+    if path.to_ascii_lowercase().ends_with(".jpg") || path.to_ascii_lowercase().ends_with(".jpeg") {
+        let file = File::create(path).map_err(|error| format!("failed to rewrite redacted image: {error}"))?;
+        let writer = BufWriter::new(file);
+        let mut encoder = JpegEncoder::new_with_quality(writer, 82);
+        encoder
+            .encode_image(&redacted)
+            .map_err(|error| format!("failed to encode redacted jpeg: {error}"))?;
+    } else {
+        redacted
+            .save(path)
+            .map_err(|error| format!("failed to save redacted image: {error}"))?;
+    }
+
+    Ok(())
+}
+
+fn load_review_shortcuts_internal(state: &SharedState, limit: i64) -> Result<ReviewShortcutsPayload, String> {
+    let safe_limit = limit.clamp(1, 64);
+
+    with_connection(state, |conn| {
+        let load_flagged = |flag_column: &str| -> Result<Vec<ReviewShortcutCapturePayload>, String> {
+            let sql = format!(
+                "
+                SELECT
+                    captures.id,
+                    captures.day_key,
+                    captures.captured_at,
+                    COALESCE(capture_annotations.tags, '[]')
+                FROM captures
+                INNER JOIN capture_annotations ON capture_annotations.capture_id = captures.id
+                WHERE capture_annotations.{flag_column} = 1
+                ORDER BY captures.captured_at DESC
+                LIMIT ?
+                "
+            );
+
+            let mut stmt = conn
+                .prepare(&sql)
+                .map_err(|error| format!("failed to prepare review shortcut query: {error}"))?;
+
+            let rows = stmt
+                .query_map(params![safe_limit], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        parse_string_list_json(&row.get::<_, String>(3)?, MAX_TAG_ENTRIES, MAX_TAG_ENTRY_LEN),
+                    ))
+                })
+                .map_err(|error| format!("failed to execute review shortcut query: {error}"))?;
+
+            let mut payload = Vec::<ReviewShortcutCapturePayload>::new();
+            for row in rows {
+                let (capture_id, day_key, captured_at, tags) =
+                    row.map_err(|error| format!("failed to read review shortcut row: {error}"))?;
+                payload.push(ReviewShortcutCapturePayload {
+                    capture_id,
+                    day_key,
+                    timestamp_label: to_timestamp_label(&captured_at),
+                    captured_at,
+                    tags,
+                });
+            }
+
+            Ok(payload)
+        };
+
+        let bookmarks = load_flagged("is_bookmarked")?;
+        let favorites = load_flagged("is_favorite")?;
+
+        let mut tag_frequency = HashMap::<String, (i64, i64, String, String)>::new();
+        let mut stmt = conn
+            .prepare(
+                "
+                SELECT
+                    captures.id,
+                    captures.day_key,
+                    captures.captured_at,
+                    COALESCE(capture_annotations.tags, '[]')
+                FROM captures
+                INNER JOIN capture_annotations ON capture_annotations.capture_id = captures.id
+                ORDER BY captures.captured_at DESC
+                LIMIT 5000
+                ",
+            )
+            .map_err(|error| format!("failed to prepare tag shortcut query: {error}"))?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    parse_string_list_json(&row.get::<_, String>(3)?, MAX_TAG_ENTRIES, MAX_TAG_ENTRY_LEN),
+                ))
+            })
+            .map_err(|error| format!("failed to execute tag shortcut query: {error}"))?;
+
+        for row in rows {
+            let (capture_id, day_key, captured_at, tags) =
+                row.map_err(|error| format!("failed to read tag shortcut row: {error}"))?;
+
+            for tag in tags {
+                let key = tag.to_ascii_lowercase();
+                let entry = tag_frequency
+                    .entry(key)
+                    .or_insert((0, capture_id, day_key.clone(), captured_at.clone()));
+                entry.0 = entry.0.saturating_add(1);
+            }
+        }
+
+        let mut tags = tag_frequency
+            .into_iter()
+            .map(|(tag, (count, latest_capture_id, latest_day_key, latest_captured_at))| {
+                ReviewTagShortcutPayload {
+                    tag,
+                    capture_count: count,
+                    latest_capture_id,
+                    latest_day_key,
+                    latest_timestamp_label: to_timestamp_label(&latest_captured_at),
+                }
+            })
+            .collect::<Vec<_>>();
+
+        tags.sort_by(|left, right| {
+            right
+                .capture_count
+                .cmp(&left.capture_count)
+                .then_with(|| left.tag.cmp(&right.tag))
+        });
+        tags.truncate(safe_limit as usize);
+
+        Ok(ReviewShortcutsPayload {
+            bookmarks,
+            favorites,
+            tags,
+        })
+    })
+}
+
+#[tauri::command]
+fn set_capture_review_state(
+    state: State<SharedState>,
+    app: AppHandle,
+    capture_id: i64,
+    is_bookmarked: Option<bool>,
+    is_favorite: Option<bool>,
+    tags: Option<Vec<String>>,
+) -> Result<CaptureReviewPayload, String> {
+    let payload = with_connection(&state, |conn| {
+        let exists = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM captures WHERE id = ?)",
+                params![capture_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|error| format!("failed to validate capture review target: {error}"))?;
+
+        if exists == 0 {
+            return Err("capture not found for review update".to_string());
+        }
+
+        let (current_bookmarked, current_favorite, current_tags) =
+            read_capture_annotation_state(conn, capture_id)?;
+
+        let next_bookmarked = is_bookmarked.unwrap_or(current_bookmarked);
+        let next_favorite = is_favorite.unwrap_or(current_favorite);
+        let next_tags = tags
+            .map(|values| normalize_string_list(&values, MAX_TAG_ENTRIES, MAX_TAG_ENTRY_LEN))
+            .unwrap_or(current_tags);
+
+        conn.execute(
+            "
+            UPDATE capture_annotations
+            SET is_bookmarked = ?, is_favorite = ?, tags = ?
+            WHERE capture_id = ?
+            ",
+            params![
+                if next_bookmarked { 1 } else { 0 },
+                if next_favorite { 1 } else { 0 },
+                encode_string_list_json(&next_tags, MAX_TAG_ENTRIES, MAX_TAG_ENTRY_LEN),
+                capture_id,
+            ],
+        )
+        .map_err(|error| format!("failed to update capture review state: {error}"))?;
+
+        Ok(CaptureReviewPayload {
+            capture_id,
+            is_bookmarked: next_bookmarked,
+            is_favorite: next_favorite,
+            tags: next_tags,
+        })
+    })?;
+
+    bump_indexing_epoch(&state);
+    app.emit("captures-updated", ())
+        .map_err(|error| format!("failed to emit capture update event after review update: {error}"))?;
+
+    Ok(payload)
+}
+
+#[tauri::command]
+fn get_review_shortcuts(
+    state: State<SharedState>,
+    limit: Option<i64>,
+) -> Result<ReviewShortcutsPayload, String> {
+    load_review_shortcuts_internal(&state, limit.unwrap_or(12))
+}
+
+#[tauri::command]
+fn redact_capture(
+    state: State<SharedState>,
+    app: AppHandle,
+    capture_id: i64,
+    redact_image: Option<bool>,
+    redact_metadata: Option<bool>,
+    clear_note: Option<bool>,
+) -> Result<(), String> {
+    let redact_image = redact_image.unwrap_or(true);
+    let redact_metadata = redact_metadata.unwrap_or(true);
+    let clear_note = clear_note.unwrap_or(false);
+
+    let (image_path, thumbnail_path, existing_note) = with_connection(&state, |conn| {
+        conn.query_row(
+            "SELECT image_path, thumbnail_path, capture_note FROM captures WHERE id = ?",
+            params![capture_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .map_err(|error| format!("failed to resolve capture for redaction: {error}"))
+    })?;
+
+    if redact_image {
+        redact_image_file(&image_path)?;
+        redact_image_file(&thumbnail_path)?;
+    }
+
+    with_connection(&state, |conn| {
+        let mut note_for_index = if clear_note {
+            String::new()
+        } else {
+            existing_note.clone()
+        };
+
+        if redact_metadata {
+            let next_note = if clear_note {
+                String::new()
+            } else if existing_note.trim().is_empty() {
+                "[redacted manually]".to_string()
+            } else {
+                existing_note.clone()
+            };
+            note_for_index = next_note.clone();
+
+            conn.execute(
+                "
+                UPDATE captures
+                SET capture_note = ?, window_title = '[redacted]', process_name = '[redacted]'
+                WHERE id = ?
+                ",
+                params![next_note, capture_id],
+            )
+            .map_err(|error| format!("failed to redact capture metadata: {error}"))?;
+        } else if clear_note {
+            note_for_index = String::new();
+            conn.execute(
+                "UPDATE captures SET capture_note = '' WHERE id = ?",
+                params![capture_id],
+            )
+            .map_err(|error| format!("failed to clear capture note during redaction: {error}"))?;
+        }
+
+        let (window_title, process_name) = conn
+            .query_row(
+                "SELECT window_title, process_name FROM captures WHERE id = ?",
+                params![capture_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .map_err(|error| format!("failed to read capture metadata after redaction: {error}"))?;
+
+        let indexed_at = Local::now().to_rfc3339();
+        refresh_capture_search_index(
+            conn,
+            capture_id,
+            &note_for_index,
+            "",
+            &window_title,
+            &process_name,
+            "redacted",
+            None,
+            Some(&indexed_at),
+        )
+    })?;
+
+    bump_indexing_epoch(&state);
+    app.emit("captures-updated", ())
+        .map_err(|error| format!("failed to emit capture update event after redaction: {error}"))?;
 
     Ok(())
 }
@@ -3726,9 +4998,12 @@ pub fn run() {
             if let Some(window) = app_handle.get_webview_window("main") {
                 let allow_exit = state.allow_exit.clone();
                 let window_handle = window.clone();
+                let close_app_handle = app_handle.clone();
                 window.on_window_event(move |event| {
                     if let WindowEvent::CloseRequested { api, .. } = event {
                         if cfg!(debug_assertions) {
+                            api.prevent_close();
+                            close_app_handle.exit(0);
                             return;
                         }
 
@@ -3765,6 +5040,9 @@ pub fn run() {
             get_capture_context_page,
             get_capture_image,
             update_capture_note,
+            set_capture_review_state,
+            get_review_shortcuts,
+            redact_capture,
             get_capture_health,
             get_ocr_health,
             reindex_all_captures,
@@ -3856,6 +5134,9 @@ mod tests {
                 ],
             )
             .map_err(|error| format!("failed to insert fake capture row: {error}"))?;
+
+            let capture_id = conn.last_insert_rowid();
+            ensure_capture_annotation_row(conn, capture_id)?;
 
             Ok(())
         })
@@ -4113,6 +5394,41 @@ mod tests {
     }
 
     #[test]
+    fn parse_retrieval_query_parts_extracts_structured_filters() {
+        let parsed = parse_retrieval_query_parts("app:figma window:design tag:roadmap bookmarked favorite");
+
+        assert!(parsed.app_terms.contains(&"figma".to_string()));
+        assert!(parsed.window_terms.contains(&"design".to_string()));
+        assert!(parsed.tag_terms.contains(&"roadmap".to_string()));
+        assert!(parsed.require_bookmarked);
+        assert!(parsed.require_favorite);
+    }
+
+    #[test]
+    fn evaluate_capture_policy_can_redact_sensitive_windows() {
+        let settings = Settings {
+            interval_minutes: 2,
+            retention_days: 30,
+            storage_cap_gb: 5.0,
+            is_paused: false,
+            startup_on_boot: false,
+            theme_id: LEGACY_THEME_ID.to_string(),
+            excluded_processes: Vec::new(),
+            excluded_window_keywords: Vec::new(),
+            pause_processes: Vec::new(),
+            pause_window_keywords: Vec::new(),
+            sensitive_window_keywords: vec!["bank".to_string()],
+            sensitive_capture_mode: SensitiveCaptureMode::Redact,
+        };
+
+        let outcome = evaluate_capture_policy(&settings, "Online banking portal", "chrome.exe")
+            .expect("expected redaction policy outcome");
+
+        assert_eq!(outcome.mode, "redact");
+        assert!(outcome.captured);
+    }
+
+    #[test]
     fn build_retrieval_snippet_uses_window_metadata_when_available() {
         let query_parts = parse_retrieval_query_parts("figma");
         let snippet = build_retrieval_snippet(
@@ -4120,6 +5436,9 @@ mod tests {
             "",
             "Figma - Design System",
             "figma.exe",
+            &[],
+            false,
+            false,
             &query_parts,
             "fallback",
         );

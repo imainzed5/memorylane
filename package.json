@@ -12,9 +12,9 @@
     "check:rust": "cargo check --manifest-path src-tauri/Cargo.toml",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
     "verify": "npm run build && npm run check:rust && npm run test:rust",
-    "build:desktop": "set \"CARGO_TARGET_DIR=%LOCALAPPDATA%\\memorylane\\cargo-target\" && tauri build",
+    "build:desktop": "npm run tauri -- build",
     "preview": "vite preview",
-    "tauri": "set \"CARGO_TARGET_DIR=%LOCALAPPDATA%\\memorylane\\cargo-target\" && tauri"
+    "tauri": "node ./scripts/tauri-dev.mjs"
   },
   "dependencies": {
     "react": "^19.1.0",

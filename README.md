@@ -32,17 +32,11 @@ MemoryLane is a Windows-only, local-first screenshot journal for desktop work. I
 6. Run all local checks: `npm run verify`
 7. Build Windows installers: `npm run build:desktop`
 
-The desktop bundle is written to `src-tauri/target/release/bundle`.
+The desktop bundle is written to `%LOCALAPPDATA%\\memorylane\\cargo-target\\release\\bundle`.
 The landing page is available separately at `public/landing.html`; the packaged exe opens the app shell from `index.html`.
+The `npm run tauri dev` wrapper clears any stale `memorylane.exe` instance and uses a fresh dev target directory on each run, which avoids the Windows file-lock error from a previous session.
+In debug builds, closing the window now exits the app instead of leaving the tray process alive, so Cargo can rebuild the exe on the next run.
 For the optional OCR installer component in NSIS builds, place `tesseract-installer.exe` in `src-tauri/resources/tesseract/` before packaging.
-
-## GitHub Releases
-
-1. Create a version tag, for example: `git tag v0.1.0`
-2. Push the tag to GitHub: `git push origin v0.1.0`
-3. The release workflow builds the Windows installers and publishes them as release assets for that tag.
-4. GitHub still shows the tag itself as the version label and source archive; the installer is the uploaded `.msi` or `.exe` asset.
-5. You can also run the workflow manually from the GitHub Actions tab by supplying an existing tag name.
 
 ## Keyboard Shortcuts
 

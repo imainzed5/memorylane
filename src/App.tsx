@@ -23,6 +23,9 @@ type CaptureRecord = {
   ocrText: string;
   windowTitle: string;
   processName: string;
+  isBookmarked: boolean;
+  isFavorite: boolean;
+  tags: string[];
   width: number;
   height: number;
 };
@@ -38,6 +41,9 @@ type RetrievalSearchResult = {
   score: number;
   snippetSource: string;
   highlightTerms: string[];
+  isBookmarked: boolean;
+  isFavorite: boolean;
+  tags: string[];
 };
 
 type DayFocusBlock = {
@@ -109,6 +115,49 @@ type SettingsPayload = {
   storageCapGb: number;
   isPaused: boolean;
   themeId: string;
+  excludedProcesses: string[];
+  excludedWindowKeywords: string[];
+  pauseProcesses: string[];
+  pauseWindowKeywords: string[];
+  sensitiveWindowKeywords: string[];
+  sensitiveCaptureMode: string;
+};
+
+type SensitiveCaptureMode = "skip" | "redact" | "pause";
+
+type CaptureReviewPayload = {
+  captureId: number;
+  isBookmarked: boolean;
+  isFavorite: boolean;
+  tags: string[];
+};
+
+type ReviewShortcutCapture = {
+  captureId: number;
+  dayKey: string;
+  capturedAt: string;
+  timestampLabel: string;
+  tags: string[];
+};
+
+type ReviewTagShortcut = {
+  tag: string;
+  captureCount: number;
+  latestCaptureId: number;
+  latestDayKey: string;
+  latestTimestampLabel: string;
+};
+
+type ReviewShortcutsPayload = {
+  bookmarks: ReviewShortcutCapture[];
+  favorites: ReviewShortcutCapture[];
+  tags: ReviewTagShortcut[];
+};
+
+type CaptureSuppressedEventPayload = {
+  mode: string;
+  reason: string;
+  captured: boolean;
 };
 
 type PauseStatePayload = {
@@ -183,13 +232,20 @@ type ViewerPaneProps = {
   actionMessage: string;
   captureHealth: CaptureHealthPayload;
   captures: CaptureRecord[];
+  compareCaptureLabel: string | null;
+  compareImageDataUrl: string | null;
   contextBadge: string;
   isFilterActive: boolean;
   onCopyPath: () => void;
+  onClearCompareAnchor: () => void;
   onDeleteCapture: () => void;
   onOpenCapturesFolder: () => void;
+  onRedactCapture: () => void;
+  onSetCompareAnchor: () => void;
   onSelectNext: () => void;
   onSelectPrevious: () => void;
+  onToggleBookmark: () => void;
+  onToggleFavorite: () => void;
   selectedCapture: CaptureRecord | null;
   selectedCaptureIndex: number;
   selectedDayLabel: string;
@@ -200,10 +256,12 @@ type ViewerPaneProps = {
 type UtilityRailProps = {
   activeRetrievalResultIndex: number;
   captureSearchQuery: string;
+  compareCaptureLabel: string | null;
   dayIntelligence: DayIntelligencePayload | null;
   dayIntelligenceError: string | null;
   dayIntelligenceLoading: boolean;
   intervalMinutes: number;
+  isReviewBusy: boolean;
   isRetrievalLoading: boolean;
   isRecording: boolean;
   nextCaptureLabel: string;
@@ -215,16 +273,27 @@ type UtilityRailProps = {
   retrievalError: string | null;
   retrievalResults: RetrievalSearchResult[];
   onCaptureNow: () => void;
+  onClearCompareAnchor: () => void;
   onDeleteDay: () => void;
+  onJumpToReviewCapture: (captureId: number) => void;
+  onApplyTagFilter: (tag: string) => void;
   onNoteDraftChange: (nextValue: string) => void;
+  onTagDraftChange: (nextValue: string) => void;
+  onRedactCapture: () => void;
+  onSaveTags: () => void;
+  onSetCompareAnchor: () => void;
   onSaveNote: () => void;
   onSelectSearchResult: (result: RetrievalSearchResult) => void;
   onSearchQueryChange: (nextValue: string) => void;
   onTogglePause: () => void;
+  onToggleBookmark: () => void;
+  onToggleFavorite: () => void;
+  reviewShortcuts: ReviewShortcutsPayload;
   searchInputRef: MutableRefObject<HTMLInputElement | null>;
   selectedCapture: CaptureRecord | null;
   selectedDaySummary: DaySummary;
   storageStats: StorageStatsPayload;
+  tagDraft: string;
   todayCaptureCount: number;
 };
 
@@ -233,14 +302,19 @@ type SettingsModalProps = {
   backupPassphrase: string;
   backupStatus: string;
   backupStatusTone: "neutral" | "success" | "error";
+  draftExcludedProcessesText: string;
+  draftExcludedWindowKeywordsText: string;
   draftIntervalMinutes: number;
+  draftPauseProcessesText: string;
+  draftPauseWindowKeywordsText: string;
   draftThemeId: ThemeId;
   draftRetentionDays: number;
+  draftSensitiveCaptureMode: SensitiveCaptureMode;
+  draftSensitiveWindowKeywordsText: string;
   draftStorageCapGb: number;
   isBackupBusy: boolean;
   isReindexBusy: boolean;
   isCustomInterval: boolean;
-  intervalMinutes: number;
   maintenanceStage: string;
   maintenanceProgress: number;
   ocrHealth: OcrHealthPayload;
@@ -248,8 +322,14 @@ type SettingsModalProps = {
   ocrReindexStatusTone: "neutral" | "success" | "error";
   onBackupImportPathChange: (nextValue: string) => void;
   onBackupPassphraseChange: (nextValue: string) => void;
+  onDraftExcludedProcessesTextChange: (nextValue: string) => void;
+  onDraftExcludedWindowKeywordsTextChange: (nextValue: string) => void;
   onEnableCustomInterval: () => void;
   onClose: () => void;
+  onDraftPauseProcessesTextChange: (nextValue: string) => void;
+  onDraftPauseWindowKeywordsTextChange: (nextValue: string) => void;
+  onDraftSensitiveCaptureModeChange: (nextValue: SensitiveCaptureMode) => void;
+  onDraftSensitiveWindowKeywordsTextChange: (nextValue: string) => void;
   onDraftThemeChange: (nextValue: ThemeId) => void;
   onDraftIntervalChange: (nextValue: number) => void;
   onSelectPresetInterval: (nextValue: number) => void;
@@ -261,8 +341,7 @@ type SettingsModalProps = {
   onOpenCapturesFolder: () => void;
   onResetDraft: () => void;
   onSaveSettings: () => void;
-  retentionDays: number;
-  storageCapGb: number;
+  settingsDirty: boolean;
   themeId: ThemeId;
   themeOptions: ThemeOption[];
   storagePath: string;
@@ -308,12 +387,22 @@ const TIMELINE_VIRTUAL_WINDOW = 72;
 const TIMELINE_THUMB_WIDTH_PX = 96;
 const LEGACY_THEME_ID: ThemeId = "amber-noir";
 const ONBOARDING_THEME_ID: ThemeId = "obsidian-jade";
-const SEARCH_SUGGESTIONS = ["around 3 PM yesterday", "release notes", "figma board", "meeting notes"];
+const SEARCH_SUGGESTIONS = [
+  "around 3 PM yesterday",
+  "release notes",
+  "app:figma",
+  "tag:roadmap",
+  "bookmarked favorite",
+];
 
 const MATCH_SOURCE_LABELS: Record<string, string> = {
   note: "note",
   ocr: "ocr",
   window: "window",
+  app: "app",
+  tag: "tag",
+  bookmark: "bookmark",
+  favorite: "favorite",
   time: "time",
   day: "day",
   metadata: "metadata",
@@ -365,6 +454,65 @@ function resolveThemeId(value: string | null | undefined): ThemeId {
   }
 
   return LEGACY_THEME_ID;
+}
+
+function resolveSensitiveCaptureMode(value: string | null | undefined): SensitiveCaptureMode {
+  const normalized = (value ?? "").trim().toLowerCase();
+  if (normalized === "redact" || normalized === "pause") {
+    return normalized;
+  }
+
+  return "skip";
+}
+
+function parseListEditorText(value: string, maxItems = 24): string[] {
+  const entries = value
+    .split(/[\n,;]/g)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+  const deduped: string[] = [];
+  const seen = new Set<string>();
+
+  for (const entry of entries) {
+    const normalized = entry.toLowerCase();
+    if (seen.has(normalized)) {
+      continue;
+    }
+
+    seen.add(normalized);
+    deduped.push(entry.slice(0, 80));
+
+    if (deduped.length >= maxItems) {
+      break;
+    }
+  }
+
+  return deduped;
+}
+
+function listToEditorText(values: string[]): string {
+  return values.join(", ");
+}
+
+function haveSameListValues(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  const leftNormalized = [...left].map((value) => value.toLowerCase()).sort();
+  const rightNormalized = [...right].map((value) => value.toLowerCase()).sort();
+
+  for (let index = 0; index < leftNormalized.length; index += 1) {
+    if (leftNormalized[index] !== rightNormalized[index]) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function parseTagDraftInput(value: string): string[] {
+  return parseListEditorText(value, 16).map((entry) => entry.slice(0, 32));
 }
 
 function themeName(themeId: ThemeId): string {
@@ -814,13 +962,20 @@ function ViewerPane({
   actionMessage,
   captureHealth,
   captures,
+  compareCaptureLabel,
+  compareImageDataUrl,
   contextBadge,
   isFilterActive,
   onCopyPath,
+  onClearCompareAnchor,
   onDeleteCapture,
   onOpenCapturesFolder,
+  onRedactCapture,
+  onSetCompareAnchor,
   onSelectNext,
   onSelectPrevious,
+  onToggleBookmark,
+  onToggleFavorite,
   selectedCapture,
   selectedCaptureIndex,
   selectedDayLabel,
@@ -828,6 +983,7 @@ function ViewerPane({
   selectedImageDataUrl,
 }: ViewerPaneProps) {
   const hasCaptures = Boolean(selectedCapture && captures.length > 0);
+  const hasCompareAnchor = Boolean(compareCaptureLabel);
 
   return (
     <main className="panel viewer-pane">
@@ -854,16 +1010,50 @@ function ViewerPane({
               &lt;
             </button>
 
-            {selectedImageDataUrl ? (
-              <img
-                className="capture-image"
-                src={selectedImageDataUrl}
-                alt={`Screenshot captured at ${selectedCapture?.timestampLabel ?? "selected time"}`}
-              />
-            ) : (
-              <div className="capture-loading">
-                <p>Loading capture preview...</p>
+            {hasCompareAnchor ? (
+              <div className="capture-compare-grid">
+                <div className="capture-compare-panel">
+                  <p className="overlay-label">Compare anchor</p>
+                  <h4>{compareCaptureLabel}</h4>
+                  {compareImageDataUrl ? (
+                    <img className="capture-image" src={compareImageDataUrl} alt="Compare anchor screenshot" />
+                  ) : (
+                    <div className="capture-loading">
+                      <p>Loading compare capture...</p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="capture-compare-panel">
+                  <p className="overlay-label">Selected capture</p>
+                  <h4>{selectedCapture?.timestampLabel ?? "Selected"}</h4>
+                  {selectedImageDataUrl ? (
+                    <img
+                      className="capture-image"
+                      src={selectedImageDataUrl}
+                      alt={`Screenshot captured at ${selectedCapture?.timestampLabel ?? "selected time"}`}
+                    />
+                  ) : (
+                    <div className="capture-loading">
+                      <p>Loading capture preview...</p>
+                    </div>
+                  )}
+                </div>
               </div>
+            ) : (
+              <>
+                {selectedImageDataUrl ? (
+                  <img
+                    className="capture-image"
+                    src={selectedImageDataUrl}
+                    alt={`Screenshot captured at ${selectedCapture?.timestampLabel ?? "selected time"}`}
+                  />
+                ) : (
+                  <div className="capture-loading">
+                    <p>Loading capture preview...</p>
+                  </div>
+                )}
+              </>
             )}
 
             <button
@@ -881,14 +1071,43 @@ function ViewerPane({
                 <p className="overlay-label">{selectedCapture?.timestampLabel ?? "Selected capture"}</p>
                 <h3>{selectedCapture ? formatCaptureTimestamp(selectedCapture.capturedAt) : "Capture unavailable"}</h3>
                 <p className="context-badge">{contextBadge}</p>
+                {selectedCapture ? (
+                  <div className="retrieval-result-badges capture-review-badges">
+                    {selectedCapture.isBookmarked ? <span className="source-pill">bookmarked</span> : null}
+                    {selectedCapture.isFavorite ? <span className="source-pill">favorite</span> : null}
+                    {selectedCapture.tags.slice(0, 3).map((tag) => (
+                      <span key={`${selectedCapture.id}-tag-${tag}`} className="source-pill">
+                        #{tag}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
               </div>
 
               <div className="overlay-actions">
+                <button className="secondary compact" type="button" onClick={onToggleBookmark}>
+                  {selectedCapture?.isBookmarked ? "remove bookmark" : "bookmark"}
+                </button>
+                <button className="secondary compact" type="button" onClick={onToggleFavorite}>
+                  {selectedCapture?.isFavorite ? "remove favorite" : "favorite"}
+                </button>
+                {hasCompareAnchor ? (
+                  <button className="secondary compact" type="button" onClick={onClearCompareAnchor}>
+                    clear compare
+                  </button>
+                ) : (
+                  <button className="secondary compact" type="button" onClick={onSetCompareAnchor}>
+                    set compare
+                  </button>
+                )}
                 <button className="secondary compact" type="button" onClick={onOpenCapturesFolder}>
                   open folder
                 </button>
                 <button className="secondary compact" type="button" onClick={onCopyPath}>
                   copy path
+                </button>
+                <button className="secondary compact" type="button" onClick={onRedactCapture}>
+                  redact
                 </button>
                 <button className="danger compact" type="button" onClick={onDeleteCapture}>
                   delete
@@ -926,10 +1145,12 @@ function ViewerPane({
 function UtilityRail({
   activeRetrievalResultIndex,
   captureSearchQuery,
+  compareCaptureLabel,
   dayIntelligence,
   dayIntelligenceError,
   dayIntelligenceLoading,
   intervalMinutes,
+  isReviewBusy,
   isRetrievalLoading,
   isRecording,
   nextCaptureLabel,
@@ -941,16 +1162,27 @@ function UtilityRail({
   retrievalError,
   retrievalResults,
   onCaptureNow,
+  onClearCompareAnchor,
   onDeleteDay,
+  onJumpToReviewCapture,
+  onApplyTagFilter,
   onNoteDraftChange,
+  onTagDraftChange,
+  onRedactCapture,
+  onSaveTags,
+  onSetCompareAnchor,
   onSaveNote,
   onSelectSearchResult,
   onSearchQueryChange,
   onTogglePause,
+  onToggleBookmark,
+  onToggleFavorite,
+  reviewShortcuts,
   searchInputRef,
   selectedCapture,
   selectedDaySummary,
   storageStats,
+  tagDraft,
   todayCaptureCount,
 }: UtilityRailProps) {
   const noteStatusLabel =
@@ -1017,7 +1249,7 @@ function UtilityRail({
         ) : null}
         {captureSearchQuery.trim().length > 0 ? (
           <>
-            <p className="storage-meta">Local search across notes, OCR text, app metadata, and time hints.</p>
+            <p className="storage-meta">Local search across notes, OCR text, app metadata, time hints, and filters like app:, window:, tag:, bookmarked, favorite.</p>
             {isRetrievalLoading ? <p className="storage-meta">Searching archive...</p> : null}
             {retrievalError ? <p className="storage-meta">{retrievalError}</p> : null}
             {!isRetrievalLoading && !retrievalError ? (
@@ -1042,6 +1274,13 @@ function UtilityRail({
                                 </span>
                               ))
                             : [<span key={`${result.captureId}-match`} className="source-pill">match</span>]}
+                          {result.isBookmarked ? <span className="source-pill">bookmarked</span> : null}
+                          {result.isFavorite ? <span className="source-pill">favorite</span> : null}
+                          {result.tags.slice(0, 2).map((tag) => (
+                            <span key={`${result.captureId}-tag-${tag}`} className="source-pill">
+                              #{tag}
+                            </span>
+                          ))}
                         </div>
                       </div>
                       <span>{result.matchReason}</span>
@@ -1166,6 +1405,115 @@ function UtilityRail({
       </section>
 
       <section className="utility-section">
+        <h3>Review Tools</h3>
+        {compareCaptureLabel ? <p className="storage-meta">Compare anchor: {compareCaptureLabel}</p> : null}
+        <div className="review-actions-grid">
+          <button className="secondary compact" type="button" onClick={onToggleBookmark} disabled={!selectedCapture || isReviewBusy}>
+            {selectedCapture?.isBookmarked ? "unbookmark" : "bookmark"}
+          </button>
+          <button className="secondary compact" type="button" onClick={onToggleFavorite} disabled={!selectedCapture || isReviewBusy}>
+            {selectedCapture?.isFavorite ? "unfavorite" : "favorite"}
+          </button>
+          {compareCaptureLabel ? (
+            <button className="secondary compact" type="button" onClick={onClearCompareAnchor} disabled={isReviewBusy}>
+              clear compare
+            </button>
+          ) : (
+            <button className="secondary compact" type="button" onClick={onSetCompareAnchor} disabled={!selectedCapture || isReviewBusy}>
+              set compare
+            </button>
+          )}
+          <button className="secondary compact" type="button" onClick={onRedactCapture} disabled={!selectedCapture || isReviewBusy}>
+            redact capture
+          </button>
+        </div>
+
+        <label className="field-block" htmlFor="capture-tags-input">
+          <span>Tags (comma separated)</span>
+          <input
+            id="capture-tags-input"
+            type="text"
+            value={tagDraft}
+            placeholder="roadmap, launch, meeting"
+            disabled={!selectedCapture}
+            onChange={(event) => onTagDraftChange(event.currentTarget.value)}
+          />
+        </label>
+        <button className="secondary compact" type="button" onClick={onSaveTags} disabled={!selectedCapture || isReviewBusy}>
+          save tags
+        </button>
+
+        {selectedCapture?.tags.length ? (
+          <div className="retrieval-result-badges">
+            {selectedCapture.tags.map((tag) => (
+              <button
+                key={`${selectedCapture.id}-selected-tag-${tag}`}
+                className="source-pill source-pill-button"
+                type="button"
+                onClick={() => onApplyTagFilter(tag)}
+              >
+                #{tag}
+              </button>
+            ))}
+          </div>
+        ) : null}
+
+        <div className="review-shortcuts-grid">
+          <p className="storage-meta">Bookmarks</p>
+          {reviewShortcuts.bookmarks.length === 0 ? (
+            <p className="storage-meta">No bookmarks yet.</p>
+          ) : (
+            reviewShortcuts.bookmarks.slice(0, 4).map((shortcut) => (
+              <button
+                key={`bookmark-${shortcut.captureId}`}
+                className="secondary compact review-jump"
+                type="button"
+                onClick={() => onJumpToReviewCapture(shortcut.captureId)}
+              >
+                {formatViewerDate(shortcut.dayKey)} · {shortcut.timestampLabel}
+              </button>
+            ))
+          )}
+        </div>
+
+        <div className="review-shortcuts-grid">
+          <p className="storage-meta">Favorites</p>
+          {reviewShortcuts.favorites.length === 0 ? (
+            <p className="storage-meta">No favorites yet.</p>
+          ) : (
+            reviewShortcuts.favorites.slice(0, 4).map((shortcut) => (
+              <button
+                key={`favorite-${shortcut.captureId}`}
+                className="secondary compact review-jump"
+                type="button"
+                onClick={() => onJumpToReviewCapture(shortcut.captureId)}
+              >
+                {formatViewerDate(shortcut.dayKey)} · {shortcut.timestampLabel}
+              </button>
+            ))
+          )}
+        </div>
+
+        {reviewShortcuts.tags.length > 0 ? (
+          <div className="review-shortcuts-grid">
+            <p className="storage-meta">Top tags</p>
+            <div className="retrieval-result-badges">
+              {reviewShortcuts.tags.slice(0, 8).map((tag) => (
+                <button
+                  key={`tag-shortcut-${tag.tag}`}
+                  className="source-pill source-pill-button"
+                  type="button"
+                  onClick={() => onApplyTagFilter(tag.tag)}
+                >
+                  #{tag.tag} ({tag.captureCount})
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </section>
+
+      <section className="utility-section">
         <h3>Recording</h3>
         <div className="recording-row">
           <span>{isRecording ? "active" : "paused"} · {intervalMinutes} min cadence</span>
@@ -1218,14 +1566,19 @@ function SettingsModal({
   backupPassphrase,
   backupStatus,
   backupStatusTone,
+  draftExcludedProcessesText,
+  draftExcludedWindowKeywordsText,
   draftIntervalMinutes,
+  draftPauseProcessesText,
+  draftPauseWindowKeywordsText,
   draftThemeId,
   draftRetentionDays,
+  draftSensitiveCaptureMode,
+  draftSensitiveWindowKeywordsText,
   draftStorageCapGb,
   isBackupBusy,
   isReindexBusy,
   isCustomInterval,
-  intervalMinutes,
   maintenanceStage,
   maintenanceProgress,
   ocrHealth,
@@ -1233,8 +1586,14 @@ function SettingsModal({
   ocrReindexStatusTone,
   onBackupImportPathChange,
   onBackupPassphraseChange,
+  onDraftExcludedProcessesTextChange,
+  onDraftExcludedWindowKeywordsTextChange,
   onEnableCustomInterval,
   onClose,
+  onDraftPauseProcessesTextChange,
+  onDraftPauseWindowKeywordsTextChange,
+  onDraftSensitiveCaptureModeChange,
+  onDraftSensitiveWindowKeywordsTextChange,
   onDraftThemeChange,
   onDraftIntervalChange,
   onSelectPresetInterval,
@@ -1246,18 +1605,12 @@ function SettingsModal({
   onOpenCapturesFolder,
   onResetDraft,
   onSaveSettings,
-  retentionDays,
-  storageCapGb,
+  settingsDirty,
   themeId,
   themeOptions,
   storagePath,
   storageStats,
 }: SettingsModalProps) {
-  const settingsDirty =
-    draftIntervalMinutes !== intervalMinutes ||
-    draftThemeId !== themeId ||
-    draftRetentionDays !== retentionDays ||
-    Number(draftStorageCapGb.toFixed(1)) !== Number(storageCapGb.toFixed(1));
   const activeThemeOption = themeOptions.find((themeOption) => themeOption.id === draftThemeId);
   const savedThemeOption = themeOptions.find((themeOption) => themeOption.id === themeId);
 
@@ -1329,6 +1682,102 @@ function SettingsModal({
                 </span>
               </button>
             ))}
+          </div>
+        </section>
+
+        <section className="settings-section">
+          <div className="settings-section-head">
+            <h4 className="settings-section-title">
+              <svg className="settings-section-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <path
+                  d="M10 3.4 4.6 5.6v3.2c0 3.5 2.3 6.7 5.4 7.8 3.1-1.1 5.4-4.3 5.4-7.8V5.6L10 3.4Z"
+                  stroke="currentColor"
+                  strokeWidth="1.4"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path d="m7.7 9.7 1.7 1.7 2.9-2.9" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              Trust and privacy
+            </h4>
+          </div>
+          <p className="field-help">
+            MemoryLane is local-first. These rules decide what gets skipped, auto-paused, or redacted before it is shown in search.
+          </p>
+
+          <div className="field-grid field-grid-tight">
+            <label className="field-block" htmlFor="excluded-processes-input">
+              <span>Exclude apps</span>
+              <textarea
+                id="excluded-processes-input"
+                value={draftExcludedProcessesText}
+                placeholder="banking.exe, password-manager.exe"
+                onChange={(event) => onDraftExcludedProcessesTextChange(event.currentTarget.value)}
+              />
+              <p className="field-help">Comma or newline separated process names.</p>
+            </label>
+
+            <label className="field-block" htmlFor="excluded-windows-input">
+              <span>Exclude window keywords</span>
+              <textarea
+                id="excluded-windows-input"
+                value={draftExcludedWindowKeywordsText}
+                placeholder="Payroll, HR portal"
+                onChange={(event) => onDraftExcludedWindowKeywordsTextChange(event.currentTarget.value)}
+              />
+              <p className="field-help">If a window title contains these words, capture is skipped.</p>
+            </label>
+          </div>
+
+          <div className="field-grid field-grid-tight">
+            <label className="field-block" htmlFor="pause-processes-input">
+              <span>Auto-pause apps</span>
+              <textarea
+                id="pause-processes-input"
+                value={draftPauseProcessesText}
+                placeholder="teams.exe, zoom.exe"
+                onChange={(event) => onDraftPauseProcessesTextChange(event.currentTarget.value)}
+              />
+              <p className="field-help">Matching process names automatically pause recording.</p>
+            </label>
+
+            <label className="field-block" htmlFor="pause-windows-input">
+              <span>Auto-pause window keywords</span>
+              <textarea
+                id="pause-windows-input"
+                value={draftPauseWindowKeywordsText}
+                placeholder="Interview panel, Incognito"
+                onChange={(event) => onDraftPauseWindowKeywordsTextChange(event.currentTarget.value)}
+              />
+              <p className="field-help">Use this when you need strict pause rules by context.</p>
+            </label>
+          </div>
+
+          <div className="field-grid field-grid-tight">
+            <label className="field-block" htmlFor="sensitive-keywords-input">
+              <span>Sensitive keywords</span>
+              <textarea
+                id="sensitive-keywords-input"
+                value={draftSensitiveWindowKeywordsText}
+                placeholder="password, otp, bank"
+                onChange={(event) => onDraftSensitiveWindowKeywordsTextChange(event.currentTarget.value)}
+              />
+              <p className="field-help">If matched, use the selected mode below.</p>
+            </label>
+
+            <label className="field-block" htmlFor="sensitive-mode-select">
+              <span>Sensitive mode</span>
+              <select
+                id="sensitive-mode-select"
+                value={draftSensitiveCaptureMode}
+                onChange={(event) => onDraftSensitiveCaptureModeChange(resolveSensitiveCaptureMode(event.currentTarget.value))}
+              >
+                <option value="skip">Skip capture</option>
+                <option value="redact">Capture with redaction</option>
+                <option value="pause">Auto-pause capture</option>
+              </select>
+              <p className="field-help">Choose between suppressing the capture, redacting image/metadata, or pausing recording.</p>
+            </label>
           </div>
         </section>
 
@@ -1761,6 +2210,18 @@ function App() {
   const [draftStorageCapGb, setDraftStorageCapGb] = useState<number>(5);
   const [themeId, setThemeId] = useState<ThemeId>(LEGACY_THEME_ID);
   const [draftThemeId, setDraftThemeId] = useState<ThemeId>(LEGACY_THEME_ID);
+  const [excludedProcesses, setExcludedProcesses] = useState<string[]>([]);
+  const [excludedWindowKeywords, setExcludedWindowKeywords] = useState<string[]>([]);
+  const [pauseProcesses, setPauseProcesses] = useState<string[]>([]);
+  const [pauseWindowKeywords, setPauseWindowKeywords] = useState<string[]>([]);
+  const [sensitiveWindowKeywords, setSensitiveWindowKeywords] = useState<string[]>([]);
+  const [sensitiveCaptureMode, setSensitiveCaptureMode] = useState<SensitiveCaptureMode>("skip");
+  const [draftExcludedProcessesText, setDraftExcludedProcessesText] = useState<string>("");
+  const [draftExcludedWindowKeywordsText, setDraftExcludedWindowKeywordsText] = useState<string>("");
+  const [draftPauseProcessesText, setDraftPauseProcessesText] = useState<string>("");
+  const [draftPauseWindowKeywordsText, setDraftPauseWindowKeywordsText] = useState<string>("");
+  const [draftSensitiveWindowKeywordsText, setDraftSensitiveWindowKeywordsText] = useState<string>("");
+  const [draftSensitiveCaptureMode, setDraftSensitiveCaptureMode] = useState<SensitiveCaptureMode>("skip");
   const [isThemeOnboardingOpen, setIsThemeOnboardingOpen] = useState<boolean>(false);
   const [onboardingThemeId, setOnboardingThemeId] = useState<ThemeId>(ONBOARDING_THEME_ID);
   const [isThemeOnboardingSaving, setIsThemeOnboardingSaving] = useState<boolean>(false);
@@ -1807,6 +2268,15 @@ function App() {
   const [maintenanceStage, setMaintenanceStage] = useState<string>("");
   const [maintenanceProgress, setMaintenanceProgress] = useState<number>(0);
   const [noteDraft, setNoteDraft] = useState<string>("");
+  const [tagDraft, setTagDraft] = useState<string>("");
+  const [isReviewBusy, setIsReviewBusy] = useState<boolean>(false);
+  const [reviewShortcuts, setReviewShortcuts] = useState<ReviewShortcutsPayload>({
+    bookmarks: [],
+    favorites: [],
+    tags: [],
+  });
+  const [compareCaptureRef, setCompareCaptureRef] = useState<ReviewShortcutCapture | null>(null);
+  const [compareImageDataUrl, setCompareImageDataUrl] = useState<string | null>(null);
   const [noteSaveState, setNoteSaveState] = useState<NoteSaveState>("idle");
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [isWindowMaximized, setIsWindowMaximized] = useState<boolean>(false);
@@ -1849,6 +2319,30 @@ function App() {
   useEffect(() => {
     setDraftThemeId(themeId);
   }, [themeId]);
+
+  useEffect(() => {
+    setDraftExcludedProcessesText(listToEditorText(excludedProcesses));
+  }, [excludedProcesses]);
+
+  useEffect(() => {
+    setDraftExcludedWindowKeywordsText(listToEditorText(excludedWindowKeywords));
+  }, [excludedWindowKeywords]);
+
+  useEffect(() => {
+    setDraftPauseProcessesText(listToEditorText(pauseProcesses));
+  }, [pauseProcesses]);
+
+  useEffect(() => {
+    setDraftPauseWindowKeywordsText(listToEditorText(pauseWindowKeywords));
+  }, [pauseWindowKeywords]);
+
+  useEffect(() => {
+    setDraftSensitiveWindowKeywordsText(listToEditorText(sensitiveWindowKeywords));
+  }, [sensitiveWindowKeywords]);
+
+  useEffect(() => {
+    setDraftSensitiveCaptureMode(sensitiveCaptureMode);
+  }, [sensitiveCaptureMode]);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", appliedThemeId);
@@ -1938,6 +2432,9 @@ function App() {
         capture.ocrText,
         capture.windowTitle,
         capture.processName,
+        capture.tags.join(" "),
+        capture.isBookmarked ? "bookmarked" : "",
+        capture.isFavorite ? "favorite" : "",
       ]
         .join(" ")
         .toLowerCase();
@@ -2150,13 +2647,31 @@ function App() {
     const trimmedTheme = settings.themeId.trim();
     const resolvedTheme = resolveThemeId(trimmedTheme);
     const needsThemeOnboarding = trimmedTheme.length === 0;
+    const resolvedSensitiveMode = resolveSensitiveCaptureMode(settings.sensitiveCaptureMode);
     setThemeId(resolvedTheme);
+    setExcludedProcesses(settings.excludedProcesses ?? []);
+    setExcludedWindowKeywords(settings.excludedWindowKeywords ?? []);
+    setPauseProcesses(settings.pauseProcesses ?? []);
+    setPauseWindowKeywords(settings.pauseWindowKeywords ?? []);
+    setSensitiveWindowKeywords(settings.sensitiveWindowKeywords ?? []);
+    setSensitiveCaptureMode(resolvedSensitiveMode);
     setOnboardingThemeId(needsThemeOnboarding ? ONBOARDING_THEME_ID : resolvedTheme);
     setIsThemeOnboardingOpen(needsThemeOnboarding);
     setStorageStats(stats);
     setCaptureHealth(health);
     setPerformanceSnapshot(performance);
     setOcrHealth(nextOcrHealth);
+  }, []);
+
+  const refreshReviewShortcuts = useCallback(async () => {
+    try {
+      const payload = await invoke<ReviewShortcutsPayload>("get_review_shortcuts", {
+        limit: 12,
+      });
+      setReviewShortcuts(payload);
+    } catch {
+      // Ignore shortcut refresh failures and keep existing in-memory state.
+    }
   }, []);
 
   const fetchCapturePage = useCallback(async (dayKey: string, offset: number, limit: number) => {
@@ -2212,12 +2727,12 @@ function App() {
 
   const refreshAll = useCallback(
     async (fallbackDayKey: string) => {
-      await Promise.all([refreshSettingsAndStats(), refreshStoragePath()]);
+      await Promise.all([refreshSettingsAndStats(), refreshStoragePath(), refreshReviewShortcuts()]);
       const { summaries, nextDayKey } = await refreshDaySummaries(fallbackDayKey);
       const total = summaries.find((day) => day.dayKey === nextDayKey)?.captureCount ?? 0;
       await initializeDayCaptures(nextDayKey, total);
     },
-    [initializeDayCaptures, refreshDaySummaries, refreshSettingsAndStats, refreshStoragePath],
+    [initializeDayCaptures, refreshDaySummaries, refreshReviewShortcuts, refreshSettingsAndStats, refreshStoragePath],
   );
 
   const loadOlderPage = useCallback(async () => {
@@ -2336,21 +2851,72 @@ function App() {
   }, [imageCacheById, selectedCaptureId]);
 
   useEffect(() => {
+    let disposed = false;
+    const compareCaptureId = compareCaptureRef?.captureId ?? null;
+
+    if (!compareCaptureId || compareCaptureId === selectedCaptureId) {
+      setCompareImageDataUrl(null);
+      return () => {
+        disposed = true;
+      };
+    }
+
+    const cachedImage = imageCacheById[compareCaptureId];
+    if (cachedImage) {
+      setCompareImageDataUrl(cachedImage);
+      return () => {
+        disposed = true;
+      };
+    }
+
+    setCompareImageDataUrl(null);
+
+    const loadCompareImage = async () => {
+      try {
+        const payload = await invoke<CaptureImagePayload>("get_capture_image", {
+          captureId: compareCaptureId,
+        });
+
+        if (!disposed) {
+          setImageCacheById((current) => ({
+            ...current,
+            [payload.id]: payload.imageDataUrl,
+          }));
+          setCompareImageDataUrl(payload.imageDataUrl);
+        }
+      } catch {
+        if (!disposed) {
+          setActionMessage("Unable to load compare capture image.");
+        }
+      }
+    };
+
+    void loadCompareImage();
+
+    return () => {
+      disposed = true;
+    };
+  }, [compareCaptureRef?.captureId, imageCacheById, selectedCaptureId]);
+
+  useEffect(() => {
     if (!selectedCapture) {
       setNoteDraft("");
+      setTagDraft("");
       setNoteSaveState("idle");
       return;
     }
 
     setNoteDraft(selectedCapture.captureNote ?? "");
+    setTagDraft(selectedCapture.tags.join(", "));
     setNoteSaveState("idle");
-  }, [selectedCapture?.id, selectedCapture?.captureNote]);
+  }, [selectedCapture?.id, selectedCapture?.captureNote, selectedCapture?.tags]);
 
   useEffect(() => {
     let disposed = false;
     let unlistenCaptures: (() => void) | undefined;
     let unlistenPause: (() => void) | undefined;
     let unlistenCaptureError: (() => void) | undefined;
+    let unlistenCaptureSuppressed: (() => void) | undefined;
 
     const bootstrap = async () => {
       setIsLoading(true);
@@ -2389,6 +2955,25 @@ function App() {
             await refreshSettingsAndStats();
           }
         });
+
+        unlistenCaptureSuppressed = await listen<CaptureSuppressedEventPayload>("capture-suppressed", async (event) => {
+          if (disposed) {
+            return;
+          }
+
+          const payload = event.payload;
+          if (payload.mode === "pause") {
+            setActionMessage(`Capture auto-paused. ${payload.reason}`);
+            await refreshSettingsAndStats();
+            return;
+          }
+
+          if (payload.captured) {
+            setActionMessage(`Capture saved with redaction. ${payload.reason}`);
+          } else {
+            setActionMessage(payload.reason);
+          }
+        });
       } catch {
         if (!disposed) {
           setActionMessage("Live event bridge not available outside desktop runtime.");
@@ -2408,6 +2993,9 @@ function App() {
       }
       if (unlistenCaptureError) {
         unlistenCaptureError();
+      }
+      if (unlistenCaptureSuppressed) {
+        unlistenCaptureSuppressed();
       }
     };
   }, [refreshAll, refreshSettingsAndStats]);
@@ -2447,16 +3035,16 @@ function App() {
     try {
       await invoke("capture_now");
       await refreshAll(selectedDayKeyRef.current);
-      setActionMessage("Captured the current screen and refreshed the timeline.");
+      setActionMessage("Capture cycle completed and timeline refreshed.");
     } catch {
       setActionMessage("Capture command failed. Check screen permissions and runtime logs.");
     }
   }, [refreshAll]);
 
-  const jumpToRetrievalResult = useCallback(async (result: RetrievalSearchResult) => {
+  const openCaptureContext = useCallback(async (captureId: number) => {
     try {
       const payload = await invoke<CaptureContextPagePayload>("get_capture_context_page", {
-        captureId: result.captureId,
+        captureId,
         pageSize: TIMELINE_PAGE_LIMIT,
       });
 
@@ -2465,11 +3053,156 @@ function App() {
       setLoadedStartOffset(payload.offset);
       setLoadedEndOffset(payload.offset + payload.captures.length);
       setSelectedCaptureId(payload.focusedCaptureId);
-      setActionMessage(`Jumped to ${formatViewerDate(payload.dayKey)} at ${result.timestampLabel}.`);
+      return payload;
     } catch {
-      setActionMessage("Unable to open that search result.");
+      return null;
     }
   }, []);
+
+  const jumpToRetrievalResult = useCallback(async (result: RetrievalSearchResult) => {
+    const payload = await openCaptureContext(result.captureId);
+    if (payload) {
+      setActionMessage(`Jumped to ${formatViewerDate(payload.dayKey)} at ${result.timestampLabel}.`);
+    } else {
+      setActionMessage("Unable to open that search result.");
+    }
+  }, [openCaptureContext]);
+
+  const jumpToReviewCapture = useCallback(async (captureId: number) => {
+    const payload = await openCaptureContext(captureId);
+    if (payload) {
+      setActionMessage(`Jumped to saved capture on ${formatViewerDate(payload.dayKey)}.`);
+    } else {
+      setActionMessage("Unable to open saved capture.");
+    }
+  }, [openCaptureContext]);
+
+  const applyTagFilter = useCallback((tag: string) => {
+    setCaptureSearchQuery(`tag:${tag}`);
+    setActionMessage(`Filtering with tag:${tag}`);
+  }, []);
+
+  const updateCaptureReviewState = useCallback(
+    async (options: { isBookmarked?: boolean; isFavorite?: boolean; tags?: string[] }, successMessage: string) => {
+      if (!selectedCapture) {
+        return;
+      }
+
+      setIsReviewBusy(true);
+      try {
+        const payload = await invoke<CaptureReviewPayload>("set_capture_review_state", {
+          captureId: selectedCapture.id,
+          isBookmarked: options.isBookmarked,
+          isFavorite: options.isFavorite,
+          tags: options.tags,
+        });
+
+        setCaptures((current) =>
+          current.map((capture) =>
+            capture.id === payload.captureId
+              ? {
+                  ...capture,
+                  isBookmarked: payload.isBookmarked,
+                  isFavorite: payload.isFavorite,
+                  tags: payload.tags,
+                }
+              : capture,
+          ),
+        );
+        setTagDraft(payload.tags.join(", "));
+        await refreshReviewShortcuts();
+        setActionMessage(successMessage);
+      } catch {
+        setActionMessage("Unable to update review state for this capture.");
+      } finally {
+        setIsReviewBusy(false);
+      }
+    },
+    [refreshReviewShortcuts, selectedCapture],
+  );
+
+  const toggleBookmark = useCallback(async () => {
+    if (!selectedCapture) {
+      return;
+    }
+
+    await updateCaptureReviewState(
+      { isBookmarked: !selectedCapture.isBookmarked },
+      selectedCapture.isBookmarked ? "Bookmark removed." : "Capture bookmarked.",
+    );
+  }, [selectedCapture, updateCaptureReviewState]);
+
+  const toggleFavorite = useCallback(async () => {
+    if (!selectedCapture) {
+      return;
+    }
+
+    await updateCaptureReviewState(
+      { isFavorite: !selectedCapture.isFavorite },
+      selectedCapture.isFavorite ? "Favorite removed." : "Capture favorited.",
+    );
+  }, [selectedCapture, updateCaptureReviewState]);
+
+  const saveCaptureTags = useCallback(async () => {
+    if (!selectedCapture) {
+      return;
+    }
+
+    const nextTags = parseTagDraftInput(tagDraft);
+    await updateCaptureReviewState({ tags: nextTags }, "Capture tags saved.");
+  }, [selectedCapture, tagDraft, updateCaptureReviewState]);
+
+  const setCompareAnchor = useCallback(() => {
+    if (!selectedCapture) {
+      return;
+    }
+
+    setCompareCaptureRef({
+      captureId: selectedCapture.id,
+      dayKey: selectedCapture.dayKey,
+      capturedAt: selectedCapture.capturedAt,
+      timestampLabel: selectedCapture.timestampLabel,
+      tags: selectedCapture.tags,
+    });
+    setActionMessage(`Set compare anchor to ${selectedCapture.timestampLabel}.`);
+  }, [selectedCapture]);
+
+  const clearCompareAnchor = useCallback(() => {
+    setCompareCaptureRef(null);
+    setCompareImageDataUrl(null);
+    setActionMessage("Compare anchor cleared.");
+  }, []);
+
+  const redactSelectedCapture = useCallback(async () => {
+    if (!selectedCapture) {
+      return;
+    }
+
+    const shouldRedact = window.confirm(
+      "Redact this capture image and metadata? This will overwrite the screenshot preview with a redacted version.",
+    );
+
+    if (!shouldRedact) {
+      return;
+    }
+
+    setIsReviewBusy(true);
+    try {
+      await invoke("redact_capture", {
+        captureId: selectedCapture.id,
+        redactImage: true,
+        redactMetadata: true,
+        clearNote: false,
+      });
+
+      await refreshAll(selectedDayKeyRef.current);
+      setActionMessage("Capture redacted successfully.");
+    } catch {
+      setActionMessage("Unable to redact selected capture.");
+    } finally {
+      setIsReviewBusy(false);
+    }
+  }, [refreshAll, selectedCapture]);
 
   const jumpThroughRetrievalResults = useCallback(
     async (step: number) => {
@@ -2568,6 +3301,12 @@ function App() {
     const retentionTarget = Math.max(1, Math.min(365, Math.round(draftRetentionDays || 1)));
     const capTarget = Math.max(0.5, Math.min(100, Number((draftStorageCapGb || 0.5).toFixed(1))));
     const themeTarget = draftThemeId;
+    const excludedProcessesTarget = parseListEditorText(draftExcludedProcessesText);
+    const excludedWindowKeywordsTarget = parseListEditorText(draftExcludedWindowKeywordsText);
+    const pauseProcessesTarget = parseListEditorText(draftPauseProcessesText);
+    const pauseWindowKeywordsTarget = parseListEditorText(draftPauseWindowKeywordsText);
+    const sensitiveWindowKeywordsTarget = parseListEditorText(draftSensitiveWindowKeywordsText);
+    const sensitiveModeTarget = draftSensitiveCaptureMode;
 
     try {
       const updated = await invoke<SettingsPayload>("update_settings", {
@@ -2575,22 +3314,46 @@ function App() {
         retentionDays: retentionTarget,
         storageCapGb: capTarget,
         themeId: themeTarget,
+        excludedProcesses: excludedProcessesTarget,
+        excludedWindowKeywords: excludedWindowKeywordsTarget,
+        pauseProcesses: pauseProcessesTarget,
+        pauseWindowKeywords: pauseWindowKeywordsTarget,
+        sensitiveWindowKeywords: sensitiveWindowKeywordsTarget,
+        sensitiveCaptureMode: sensitiveModeTarget,
       });
 
       setIntervalMinutes(updated.intervalMinutes);
       setRetentionDays(updated.retentionDays);
       setStorageCapGb(updated.storageCapGb);
       setThemeId(resolveThemeId(updated.themeId));
+      setExcludedProcesses(updated.excludedProcesses ?? []);
+      setExcludedWindowKeywords(updated.excludedWindowKeywords ?? []);
+      setPauseProcesses(updated.pauseProcesses ?? []);
+      setPauseWindowKeywords(updated.pauseWindowKeywords ?? []);
+      setSensitiveWindowKeywords(updated.sensitiveWindowKeywords ?? []);
+      setSensitiveCaptureMode(resolveSensitiveCaptureMode(updated.sensitiveCaptureMode));
       await refreshAll(selectedDayKeyRef.current);
       setActionMessage(
-        `Settings saved. Capturing every ${updated.intervalMinutes} minute(s) with ${themeName(resolveThemeId(updated.themeId))}.`,
+        `Settings saved. Capturing every ${updated.intervalMinutes} minute(s) with ${themeName(resolveThemeId(updated.themeId))}. Privacy mode: ${resolveSensitiveCaptureMode(updated.sensitiveCaptureMode)}.`,
       );
       return true;
     } catch {
       setActionMessage("Unable to save settings.");
       return false;
     }
-  }, [draftIntervalMinutes, draftRetentionDays, draftStorageCapGb, draftThemeId, refreshAll]);
+  }, [
+    draftExcludedProcessesText,
+    draftExcludedWindowKeywordsText,
+    draftIntervalMinutes,
+    draftPauseProcessesText,
+    draftPauseWindowKeywordsText,
+    draftRetentionDays,
+    draftSensitiveCaptureMode,
+    draftSensitiveWindowKeywordsText,
+    draftStorageCapGb,
+    draftThemeId,
+    refreshAll,
+  ]);
 
   const exportEncryptedBackup = useCallback(async () => {
     if (backupPassphrase.trim().length < 8) {
@@ -2713,7 +3476,24 @@ function App() {
     setDraftThemeId(themeId);
     setDraftRetentionDays(retentionDays);
     setDraftStorageCapGb(storageCapGb);
-  }, [intervalMinutes, retentionDays, storageCapGb, themeId]);
+    setDraftExcludedProcessesText(listToEditorText(excludedProcesses));
+    setDraftExcludedWindowKeywordsText(listToEditorText(excludedWindowKeywords));
+    setDraftPauseProcessesText(listToEditorText(pauseProcesses));
+    setDraftPauseWindowKeywordsText(listToEditorText(pauseWindowKeywords));
+    setDraftSensitiveWindowKeywordsText(listToEditorText(sensitiveWindowKeywords));
+    setDraftSensitiveCaptureMode(sensitiveCaptureMode);
+  }, [
+    excludedProcesses,
+    excludedWindowKeywords,
+    intervalMinutes,
+    pauseProcesses,
+    pauseWindowKeywords,
+    retentionDays,
+    sensitiveCaptureMode,
+    sensitiveWindowKeywords,
+    storageCapGb,
+    themeId,
+  ]);
 
   const completeThemeOnboarding = useCallback(async () => {
     if (isThemeOnboardingSaving) {
@@ -2822,12 +3602,15 @@ function App() {
       const payload = await invoke<DeleteCapturePayload>("delete_capture", {
         captureId: selectedCapture.id,
       });
+      if (compareCaptureRef?.captureId === selectedCapture.id) {
+        clearCompareAnchor();
+      }
       await refreshAll(payload.dayKey);
       setActionMessage(`Deleted capture and ${payload.removedFiles} file(s) from ${formatDaySecondary(payload.dayKey)}.`);
     } catch {
       setActionMessage("Delete capture action failed.");
     }
-  }, [refreshAll, selectedCapture]);
+  }, [clearCompareAnchor, compareCaptureRef?.captureId, refreshAll, selectedCapture]);
 
   const deleteSelectedDay = useCallback(async () => {
     if (selectedDaySummary.captureCount === 0) {
@@ -2847,6 +3630,9 @@ function App() {
       const payload = await invoke<DeleteDayPayload>("delete_day", {
         dayKey: selectedDaySummary.dayKey,
       });
+      if (compareCaptureRef?.dayKey === payload.dayKey) {
+        clearCompareAnchor();
+      }
       await refreshAll(todayKey);
       setActionMessage(
         `Deleted ${payload.removedRows} captures and ${payload.removedFiles} files from ${formatViewerDate(payload.dayKey)}.`,
@@ -2854,7 +3640,7 @@ function App() {
     } catch {
       setActionMessage("Delete day action failed.");
     }
-  }, [refreshAll, selectedDaySummary, todayKey]);
+  }, [clearCompareAnchor, compareCaptureRef?.dayKey, refreshAll, selectedDaySummary, todayKey]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -2934,6 +3720,16 @@ function App() {
           event.preventDefault();
           void deleteSelectedCapture();
           return;
+        case "b":
+        case "B":
+          event.preventDefault();
+          void toggleBookmark();
+          return;
+        case "f":
+        case "F":
+          event.preventDefault();
+          void toggleFavorite();
+          return;
         case " ":
         case "Spacebar":
           event.preventDefault();
@@ -2990,7 +3786,9 @@ function App() {
     isThemeOnboardingOpen,
     isSettingsOpen,
     retrievalResults.length,
+    toggleBookmark,
     toggleFullscreen,
+    toggleFavorite,
     togglePauseResume,
     triggerCaptureNow,
   ]);
@@ -3001,6 +3799,27 @@ function App() {
   const selectedDayLabel = formatViewerDate(selectedDaySummary.dayKey);
   const contextBadge = deriveContextBadge(selectedCapture);
   const noteDirty = selectedCapture ? noteDraft !== selectedCapture.captureNote : false;
+  const compareCaptureLabel =
+    compareCaptureRef && compareCaptureRef.captureId !== selectedCapture?.id
+      ? `${formatViewerDate(compareCaptureRef.dayKey)} · ${compareCaptureRef.timestampLabel}`
+      : null;
+
+  const draftExcludedProcesses = parseListEditorText(draftExcludedProcessesText);
+  const draftExcludedWindowKeywords = parseListEditorText(draftExcludedWindowKeywordsText);
+  const draftPauseProcesses = parseListEditorText(draftPauseProcessesText);
+  const draftPauseWindowKeywords = parseListEditorText(draftPauseWindowKeywordsText);
+  const draftSensitiveKeywords = parseListEditorText(draftSensitiveWindowKeywordsText);
+  const settingsDirty =
+    draftIntervalMinutes !== intervalMinutes ||
+    draftThemeId !== themeId ||
+    draftRetentionDays !== retentionDays ||
+    Number(draftStorageCapGb.toFixed(1)) !== Number(storageCapGb.toFixed(1)) ||
+    draftSensitiveCaptureMode !== sensitiveCaptureMode ||
+    !haveSameListValues(draftExcludedProcesses, excludedProcesses) ||
+    !haveSameListValues(draftExcludedWindowKeywords, excludedWindowKeywords) ||
+    !haveSameListValues(draftPauseProcesses, pauseProcesses) ||
+    !haveSameListValues(draftPauseWindowKeywords, pauseWindowKeywords) ||
+    !haveSameListValues(draftSensitiveKeywords, sensitiveWindowKeywords);
 
   const handleWindowMinimize = useCallback(async () => {
     try {
@@ -3073,13 +3892,20 @@ function App() {
           actionMessage={actionMessage}
           captureHealth={captureHealth}
           captures={filteredCaptures}
+          compareCaptureLabel={compareCaptureLabel}
+          compareImageDataUrl={compareImageDataUrl}
           contextBadge={contextBadge}
           isFilterActive={normalizedSearch.length > 0}
           onCopyPath={() => void copySelectedCapturePath()}
+          onClearCompareAnchor={clearCompareAnchor}
           onDeleteCapture={() => void deleteSelectedCapture()}
           onOpenCapturesFolder={() => void openCapturesFolder()}
+          onRedactCapture={() => void redactSelectedCapture()}
+          onSetCompareAnchor={setCompareAnchor}
           onSelectNext={() => shiftCapture(1)}
           onSelectPrevious={() => shiftCapture(-1)}
+          onToggleBookmark={() => void toggleBookmark()}
+          onToggleFavorite={() => void toggleFavorite()}
           selectedCapture={selectedCapture}
           selectedCaptureIndex={selectedCaptureIndex}
           selectedDayLabel={selectedDayLabel}
@@ -3090,10 +3916,12 @@ function App() {
         <UtilityRail
           activeRetrievalResultIndex={activeRetrievalResultIndex}
           captureSearchQuery={captureSearchQuery}
+          compareCaptureLabel={compareCaptureLabel}
           dayIntelligence={dayIntelligence}
           dayIntelligenceError={dayIntelligenceError}
           dayIntelligenceLoading={isDayIntelligenceLoading}
           intervalMinutes={intervalMinutes}
+          isReviewBusy={isReviewBusy}
           isRetrievalLoading={isRetrievalLoading}
           isRecording={isRecording}
           nextCaptureLabel={nextCaptureLabel}
@@ -3105,8 +3933,15 @@ function App() {
           retrievalError={retrievalError}
           retrievalResults={retrievalResults}
           onCaptureNow={() => void triggerCaptureNow()}
+          onClearCompareAnchor={clearCompareAnchor}
           onDeleteDay={() => void deleteSelectedDay()}
+          onJumpToReviewCapture={(captureId) => void jumpToReviewCapture(captureId)}
+          onApplyTagFilter={applyTagFilter}
           onNoteDraftChange={setNoteDraft}
+          onTagDraftChange={setTagDraft}
+          onRedactCapture={() => void redactSelectedCapture()}
+          onSaveTags={() => void saveCaptureTags()}
+          onSetCompareAnchor={setCompareAnchor}
           onSaveNote={() => void saveCaptureNote()}
           onSelectSearchResult={(result) => {
             const resultIndex = retrievalResults.findIndex((item) => item.captureId === result.captureId);
@@ -3117,10 +3952,14 @@ function App() {
           }}
           onSearchQueryChange={setCaptureSearchQuery}
           onTogglePause={() => void togglePauseResume()}
+          onToggleBookmark={() => void toggleBookmark()}
+          onToggleFavorite={() => void toggleFavorite()}
+          reviewShortcuts={reviewShortcuts}
           searchInputRef={searchInputRef}
           selectedCapture={selectedCapture}
           selectedDaySummary={selectedDaySummary}
           storageStats={storageStats}
+          tagDraft={tagDraft}
           todayCaptureCount={todayCaptureCount}
         />
 
@@ -3158,14 +3997,19 @@ function App() {
           backupPassphrase={backupPassphrase}
           backupStatus={backupStatus}
           backupStatusTone={backupStatusTone}
+          draftExcludedProcessesText={draftExcludedProcessesText}
+          draftExcludedWindowKeywordsText={draftExcludedWindowKeywordsText}
           draftIntervalMinutes={draftIntervalMinutes}
+          draftPauseProcessesText={draftPauseProcessesText}
+          draftPauseWindowKeywordsText={draftPauseWindowKeywordsText}
           draftThemeId={draftThemeId}
           draftRetentionDays={draftRetentionDays}
+          draftSensitiveCaptureMode={draftSensitiveCaptureMode}
+          draftSensitiveWindowKeywordsText={draftSensitiveWindowKeywordsText}
           draftStorageCapGb={draftStorageCapGb}
           isBackupBusy={isBackupBusy}
           isReindexBusy={isOcrReindexBusy}
           isCustomInterval={isDraftIntervalCustom}
-          intervalMinutes={intervalMinutes}
           maintenanceStage={maintenanceStage}
           maintenanceProgress={maintenanceProgress}
           ocrHealth={ocrHealth}
@@ -3173,8 +4017,14 @@ function App() {
           ocrReindexStatusTone={ocrReindexStatusTone}
           onBackupImportPathChange={setBackupImportPath}
           onBackupPassphraseChange={setBackupPassphrase}
+          onDraftExcludedProcessesTextChange={setDraftExcludedProcessesText}
+          onDraftExcludedWindowKeywordsTextChange={setDraftExcludedWindowKeywordsText}
           onEnableCustomInterval={() => setIsDraftIntervalCustom(true)}
           onClose={() => setIsSettingsOpen(false)}
+          onDraftPauseProcessesTextChange={setDraftPauseProcessesText}
+          onDraftPauseWindowKeywordsTextChange={setDraftPauseWindowKeywordsText}
+          onDraftSensitiveCaptureModeChange={setDraftSensitiveCaptureMode}
+          onDraftSensitiveWindowKeywordsTextChange={setDraftSensitiveWindowKeywordsText}
           onDraftThemeChange={setDraftThemeId}
           onDraftIntervalChange={(nextValue) => {
             setIsDraftIntervalCustom(true);
@@ -3192,8 +4042,7 @@ function App() {
           onOpenCapturesFolder={() => void openCapturesFolder()}
           onResetDraft={resetSettingsDraft}
           onSaveSettings={() => void saveSettingsFromModal()}
-          retentionDays={retentionDays}
-          storageCapGb={storageCapGb}
+          settingsDirty={settingsDirty}
           themeId={themeId}
           themeOptions={THEME_OPTIONS}
           storagePath={storagePath}

@@ -222,7 +222,8 @@ body {
 
 button,
 input,
-textarea {
+textarea,
+select {
   font: inherit;
 }
 
@@ -624,6 +625,34 @@ button {
   height: 100%;
 }
 
+.capture-compare-grid {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 8px;
+}
+
+.capture-compare-panel {
+  min-width: 0;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 4px;
+  padding: 8px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--line-soft) 70%, transparent);
+  background: color-mix(in srgb, var(--bg-panel-soft) 72%, transparent);
+  overflow: hidden;
+}
+
+.capture-compare-panel h4 {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
 .capture-image {
   display: block;
   object-fit: contain;
@@ -736,6 +765,10 @@ button {
   color: var(--context-text);
   border: 1px solid var(--context-border);
   background: var(--context-bg);
+}
+
+.capture-review-badges {
+  margin-top: 6px;
 }
 
 .overlay-actions {
@@ -985,6 +1018,10 @@ button {
   color: var(--accent-amber-strong);
   background: color-mix(in srgb, var(--accent-amber) 14%, transparent);
   white-space: nowrap;
+}
+
+.source-pill-button {
+  cursor: pointer;
 }
 
 .retrieval-result span {
@@ -1294,7 +1331,8 @@ button {
 }
 
 input,
-textarea {
+textarea,
+select {
   border-radius: 10px;
   border: 1px solid var(--line-strong);
   background: var(--input-bg);
@@ -1601,6 +1639,21 @@ textarea::placeholder {
   gap: 8px;
 }
 
+.review-actions-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.review-shortcuts-grid {
+  display: grid;
+  gap: 6px;
+}
+
+.review-jump {
+  text-align: left;
+}
+
 .settings-footer {
   position: sticky;
   bottom: 0;
@@ -1677,6 +1730,10 @@ textarea::placeholder {
 
   .capture-overlay {
     flex-wrap: wrap;
+  }
+
+  .capture-compare-grid {
+    grid-template-columns: 1fr;
   }
 }
 
