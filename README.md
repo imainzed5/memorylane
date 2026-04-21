@@ -30,7 +30,7 @@ MemoryLane is a Windows-only, local-first screenshot journal for desktop work. I
 4. Check Rust: `npm run check:rust`
 5. Run Rust tests: `npm run test:rust`
 6. Run all local checks: `npm run verify`
-7. Build Windows installers: `npm run build:desktop`
+7. Build the Windows installer: `npm run build:desktop`
 
 The desktop bundle is written to `%LOCALAPPDATA%\\memorylane\\cargo-target\\release\\bundle`.
 The landing page is available separately at `public/landing.html`; the packaged exe opens the app shell from `index.html`.

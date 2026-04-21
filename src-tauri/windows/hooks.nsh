@@ -10,12 +10,15 @@
     Goto ml_ocr_done
   ${EndIf}
 
+  IfSilent ml_skip_ocr
+
+  IfFileExists "$INSTDIR\resources\tesseract\tesseract-installer.exe" 0 ml_missing_ocr_installer
+
   MessageBox MB_ICONQUESTION|MB_YESNO|MB_DEFBUTTON1 \
     "MemoryLane can install an optional OCR component (Tesseract).$\r$\n$\r$\nTesseract lets MemoryLane index screenshot text so search works for words inside images.$\r$\n$\r$\nInstall OCR component now? (Recommended)" \
     IDYES ml_install_ocr IDNO ml_skip_ocr
 
   ml_install_ocr:
-    IfFileExists "$INSTDIR\resources\tesseract\tesseract-installer.exe" 0 ml_missing_ocr_installer
     DetailPrint "Installing optional OCR component (Tesseract)..."
     ExecWait '"$INSTDIR\resources\tesseract\tesseract-installer.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-' $2
     ${If} $2 == 0
@@ -26,7 +29,7 @@
     Goto ml_ocr_done
 
   ml_missing_ocr_installer:
-    MessageBox MB_ICONEXCLAMATION|MB_OK "This installer build does not contain the OCR component package. MemoryLane will still run, but OCR search will be unavailable."
+    DetailPrint "OCR component package is not bundled. Skipping optional OCR setup."
     Goto ml_ocr_done
 
   ml_skip_ocr:

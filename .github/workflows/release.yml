@@ -55,7 +55,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $stagingDir | Out-Null
 
           Get-ChildItem -Path $bundleRoot -Recurse -File |
-            Where-Object { $_.Extension -in '.msi', '.exe', '.zip' } |
+            Where-Object { $_.Extension -eq '.exe' } |
             Copy-Item -Destination $stagingDir -Force
 
           Get-ChildItem -Path $stagingDir
@@ -68,6 +68,5 @@ jobs:
           generate_release_notes: true
           overwrite_files: true
           files: |
-            release-assets/*.msi
             release-assets/*.exe
           fail_on_unmatched_files: true

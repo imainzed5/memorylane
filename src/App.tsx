@@ -2,6 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObjec
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import "@fontsource/geist-sans/400.css";
+import "@fontsource/geist-sans/500.css";
+import "@fontsource/geist-sans/600.css";
+import "@fontsource/geist-sans/700.css";
+import "@fontsource/geist-mono/500.css";
 import "./App.css";
 
 type DaySummary = {
@@ -195,6 +200,8 @@ type ThemeOption = {
   swatches: [string, string, string, string];
 };
 
+type WorkspaceMode = "browse" | "review" | "intelligence";
+
 type TopBarProps = {
   hasNextDay: boolean;
   hasPreviousDay: boolean;
@@ -206,6 +213,7 @@ type TopBarProps = {
   selectedDayLabel: string;
   todayKey: string;
   onJumpToNow: () => void;
+  onOpenShortcuts: () => void;
   onOpenSettings: () => void;
   onSelectDay: (dayKey: string) => void;
   onSelectNextDay: () => void;
@@ -236,9 +244,12 @@ type ViewerPaneProps = {
   compareImageDataUrl: string | null;
   contextBadge: string;
   isFilterActive: boolean;
+  onCaptureNow: () => void;
+  onClearSearch: () => void;
   onCopyPath: () => void;
   onClearCompareAnchor: () => void;
   onDeleteCapture: () => void;
+  onOpenSettings: () => void;
   onOpenCapturesFolder: () => void;
   onRedactCapture: () => void;
   onSetCompareAnchor: () => void;
@@ -253,6 +264,42 @@ type ViewerPaneProps = {
   selectedImageDataUrl: string | null;
 };
 
+type ReviewWorkspaceProps = {
+  compareCaptureLabel: string | null;
+  isReviewBusy: boolean;
+  noteDirty: boolean;
+  noteDraft: string;
+  noteSaveState: NoteSaveState;
+  onApplyTagFilter: (tag: string) => void;
+  onClearCompareAnchor: () => void;
+  onJumpToReviewCapture: (captureId: number) => void;
+  onNoteDraftChange: (nextValue: string) => void;
+  onOpenBrowseWorkspace: () => void;
+  onOpenIntelligenceWorkspace: () => void;
+  onRedactCapture: () => void;
+  onSaveNote: () => void;
+  onSaveTags: () => void;
+  onSetCompareAnchor: () => void;
+  onTagDraftChange: (nextValue: string) => void;
+  onToggleBookmark: () => void;
+  onToggleFavorite: () => void;
+  reviewShortcuts: ReviewShortcutsPayload;
+  selectedCapture: CaptureRecord | null;
+  selectedDayLabel: string;
+  tagDraft: string;
+};
+
+type IntelligenceWorkspaceProps = {
+  dayIntelligence: DayIntelligencePayload | null;
+  dayIntelligenceError: string | null;
+  dayIntelligenceLoading: boolean;
+  onOpenBrowseWorkspace: () => void;
+  onOpenReviewWorkspace: () => void;
+  onSearchForTerm: (term: string) => void;
+  selectedDayLabel: string;
+  selectedDaySummary: DaySummary;
+};
+
 type UtilityRailProps = {
   activeRetrievalResultIndex: number;
   captureSearchQuery: string;
@@ -261,40 +308,27 @@ type UtilityRailProps = {
   dayIntelligenceError: string | null;
   dayIntelligenceLoading: boolean;
   intervalMinutes: number;
-  isReviewBusy: boolean;
   isRetrievalLoading: boolean;
   isRecording: boolean;
   nextCaptureLabel: string;
-  noteDirty: boolean;
-  noteDraft: string;
-  noteSaveState: NoteSaveState;
   ocrHealth: OcrHealthPayload;
   performanceSnapshot: PerformanceSnapshotPayload;
   retrievalError: string | null;
   retrievalResults: RetrievalSearchResult[];
   onCaptureNow: () => void;
-  onClearCompareAnchor: () => void;
   onDeleteDay: () => void;
-  onJumpToReviewCapture: (captureId: number) => void;
-  onApplyTagFilter: (tag: string) => void;
-  onNoteDraftChange: (nextValue: string) => void;
-  onTagDraftChange: (nextValue: string) => void;
-  onRedactCapture: () => void;
-  onSaveTags: () => void;
-  onSetCompareAnchor: () => void;
-  onSaveNote: () => void;
+  onOpenBrowseWorkspace: () => void;
+  onOpenIntelligenceWorkspace: () => void;
+  onOpenReviewWorkspace: () => void;
   onSelectSearchResult: (result: RetrievalSearchResult) => void;
   onSearchQueryChange: (nextValue: string) => void;
   onTogglePause: () => void;
-  onToggleBookmark: () => void;
-  onToggleFavorite: () => void;
-  reviewShortcuts: ReviewShortcutsPayload;
   searchInputRef: MutableRefObject<HTMLInputElement | null>;
   selectedCapture: CaptureRecord | null;
   selectedDaySummary: DaySummary;
   storageStats: StorageStatsPayload;
-  tagDraft: string;
   todayCaptureCount: number;
+  workspaceMode: WorkspaceMode;
 };
 
 type SettingsModalProps = {
@@ -356,6 +390,19 @@ type ThemeOnboardingModalProps = {
   onSelectTheme: (themeId: ThemeId) => void;
 };
 
+type QuickStartModalProps = {
+  intervalMinutes: number;
+  onCaptureNow: () => void;
+  onClose: () => void;
+  onOpenSettings: () => void;
+  onOpenShortcuts: () => void;
+};
+
+type KeyboardShortcutsModalProps = {
+  onClose: () => void;
+  onOpenSettings: () => void;
+};
+
 type TimelineStripProps = {
   captures: CaptureRecord[];
   hasNewerPages: boolean;
@@ -364,8 +411,11 @@ type TimelineStripProps = {
   isPageLoading: boolean;
   loadedEndOffset: number;
   loadedStartOffset: number;
+  onCaptureNow: () => void;
+  onClearSearch: () => void;
   onLoadNewer: () => void;
   onLoadOlder: () => void;
+  onOpenSettings: () => void;
   onSelectCapture: (captureId: number) => void;
   onSelectCaptureAtIndex: (index: number) => void;
   searchQuery: string;
@@ -387,6 +437,7 @@ const TIMELINE_VIRTUAL_WINDOW = 72;
 const TIMELINE_THUMB_WIDTH_PX = 96;
 const LEGACY_THEME_ID: ThemeId = "amber-noir";
 const ONBOARDING_THEME_ID: ThemeId = "obsidian-jade";
+const QUICKSTART_DISMISS_STORAGE_KEY = "memorylane.quickstart.v1.dismissed";
 const SEARCH_SUGGESTIONS = [
   "around 3 PM yesterday",
   "release notes",
@@ -513,6 +564,22 @@ function haveSameListValues(left: string[], right: string[]): boolean {
 
 function parseTagDraftInput(value: string): string[] {
   return parseListEditorText(value, 16).map((entry) => entry.slice(0, 32));
+}
+
+function hasDismissedQuickStart(): boolean {
+  try {
+    return window.localStorage.getItem(QUICKSTART_DISMISS_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function markQuickStartDismissed(): void {
+  try {
+    window.localStorage.setItem(QUICKSTART_DISMISS_STORAGE_KEY, "1");
+  } catch {
+    // Ignore localStorage availability issues in restricted runtimes.
+  }
 }
 
 function themeName(themeId: ThemeId): string {
@@ -784,6 +851,7 @@ function TopBar({
   selectedDayLabel,
   todayKey,
   onJumpToNow,
+  onOpenShortcuts,
   onOpenSettings,
   onSelectDay,
   onSelectNextDay,
@@ -832,6 +900,10 @@ function TopBar({
             →
           </button>
         </div>
+
+        <p className="topbar-subhint" data-tauri-drag-region>
+          Day: ↑/↓ or [ / ] · Capture: ←/→ or J / K · Workspace: R / I / V
+        </p>
       </div>
 
       <div className="topbar-actions">
@@ -853,6 +925,10 @@ function TopBar({
 
         <button className="secondary compact topbar-now" type="button" onClick={onJumpToNow} disabled={isJumpToNowDisabled}>
           now
+        </button>
+
+        <button className="secondary compact topbar-shortcuts" type="button" onClick={onOpenShortcuts}>
+          shortcuts ?
         </button>
 
         <button className="secondary icon-button" type="button" title="Settings" aria-label="Open settings" onClick={onOpenSettings}>
@@ -966,9 +1042,12 @@ function ViewerPane({
   compareImageDataUrl,
   contextBadge,
   isFilterActive,
+  onCaptureNow,
+  onClearSearch,
   onCopyPath,
   onClearCompareAnchor,
   onDeleteCapture,
+  onOpenSettings,
   onOpenCapturesFolder,
   onRedactCapture,
   onSetCompareAnchor,
@@ -1119,17 +1198,32 @@ function ViewerPane({
       ) : (
         <section className="empty-state">
           <p className="section-title">No captures in view</p>
-          <h3>{isFilterActive ? "No match for this search" : "Your visual timeline starts in the tray"}</h3>
+          <h3>{isFilterActive ? "No capture matched this search" : "Your timeline starts in the tray"}</h3>
           <p>
             {isFilterActive
-              ? "Try a different time or note keyword to see captures again."
-              : "MemoryLane runs locally in the background and fills this viewer as screenshots arrive."}
+              ? "Try a broader phrase, remove a filter token, or jump to another day."
+              : "MemoryLane captures quietly in the background. Installed builds keep running from the tray even after closing the window."}
           </p>
           <div className="empty-actions">
+            {isFilterActive ? (
+              <button className="secondary" type="button" onClick={onClearSearch}>
+                clear search
+              </button>
+            ) : (
+              <>
+                <button className="secondary" type="button" onClick={onCaptureNow}>
+                  capture now
+                </button>
+                <button className="secondary" type="button" onClick={onOpenSettings}>
+                  review capture settings
+                </button>
+              </>
+            )}
             <button className="secondary" type="button" onClick={onOpenCapturesFolder}>
               open captures folder
             </button>
           </div>
+          <p className="empty-help">Tip: press <strong>?</strong> for keyboard shortcuts.</p>
         </section>
       )}
 
@@ -1142,49 +1236,32 @@ function ViewerPane({
   );
 }
 
-function UtilityRail({
-  activeRetrievalResultIndex,
-  captureSearchQuery,
+function ReviewWorkspace({
   compareCaptureLabel,
-  dayIntelligence,
-  dayIntelligenceError,
-  dayIntelligenceLoading,
-  intervalMinutes,
   isReviewBusy,
-  isRetrievalLoading,
-  isRecording,
-  nextCaptureLabel,
   noteDirty,
   noteDraft,
   noteSaveState,
-  ocrHealth,
-  performanceSnapshot,
-  retrievalError,
-  retrievalResults,
-  onCaptureNow,
-  onClearCompareAnchor,
-  onDeleteDay,
-  onJumpToReviewCapture,
   onApplyTagFilter,
+  onClearCompareAnchor,
+  onJumpToReviewCapture,
   onNoteDraftChange,
-  onTagDraftChange,
+  onOpenBrowseWorkspace,
+  onOpenIntelligenceWorkspace,
   onRedactCapture,
+  onSaveNote,
   onSaveTags,
   onSetCompareAnchor,
-  onSaveNote,
-  onSelectSearchResult,
-  onSearchQueryChange,
-  onTogglePause,
+  onTagDraftChange,
   onToggleBookmark,
   onToggleFavorite,
   reviewShortcuts,
-  searchInputRef,
   selectedCapture,
-  selectedDaySummary,
-  storageStats,
+  selectedDayLabel,
   tagDraft,
-  todayCaptureCount,
-}: UtilityRailProps) {
+}: ReviewWorkspaceProps) {
+  const bookmarkedShortcuts = reviewShortcuts.bookmarks.slice(0, 10);
+  const favoriteShortcuts = reviewShortcuts.favorites.slice(0, 10);
   const noteStatusLabel =
     noteSaveState === "saving"
       ? "Saving..."
@@ -1195,149 +1272,320 @@ function UtilityRail({
           : noteDirty
             ? "Unsaved"
             : "";
-  const focusPreview = dayIntelligence?.focusBlocks.slice(0, 3) ?? [];
-  const focusOverflow = dayIntelligence?.focusBlocks.slice(3) ?? [];
-  const highlightsPreview = dayIntelligence?.changeHighlights.slice(0, 3) ?? [];
-  const highlightsOverflow = dayIntelligence?.changeHighlights.slice(3) ?? [];
-  const topThemePreview = dayIntelligence?.topTerms.slice(0, 4) ?? [];
+  const noteStatusText = noteStatusLabel || "Up to date";
+  const selectedCaptureSummary = selectedCapture
+    ? `${selectedCapture.timestampLabel} · ${selectedCapture.processName || "Unknown app"}`
+    : `No capture selected for ${selectedDayLabel}.`;
+  const selectedWindowLabel = selectedCapture?.windowTitle?.trim().length
+    ? selectedCapture.windowTitle
+    : null;
 
   return (
-    <aside className="panel utility-rail">
-      <section className="utility-section">
-        <h3>Today</h3>
-        <div className="today-stat-grid">
-          <div>
-            <strong>{todayCaptureCount}</strong>
-            <span>captures</span>
-          </div>
-          <div>
-            <strong>{intervalMinutes}m</strong>
-            <span>cadence</span>
-          </div>
+    <main className="panel viewer-pane workspace-pane review-workspace">
+      <div className="workspace-head">
+        <div>
+          <p className="section-title">Workspace</p>
+          <h2>Review tools</h2>
+          <p className="workspace-lead">Mark, compare, and jump through important moments for {selectedDayLabel}.</p>
         </div>
-      </section>
+        <div className="workspace-head-actions">
+          <button className="secondary compact" type="button" onClick={onOpenBrowseWorkspace}>
+            browse workspace
+          </button>
+          <button className="secondary compact" type="button" onClick={onOpenIntelligenceWorkspace}>
+            day intelligence
+          </button>
+        </div>
+      </div>
 
-      <section className="utility-section">
-        <h3>Search Captures</h3>
-        <div className="search-command">
-          <span className="search-command-key">/</span>
-          <input
-            ref={searchInputRef}
-            type="text"
-            value={captureSearchQuery}
-            placeholder="Search notes, OCR, apps, or around 3 PM..."
-            onChange={(event) => onSearchQueryChange(event.currentTarget.value)}
-          />
-        </div>
-        {!ocrHealth.engineAvailable ? <p className="storage-meta warning">{ocrHealth.statusMessage}</p> : null}
-        {captureSearchQuery.trim().length === 0 ? (
-          <>
-            <p className="storage-meta">Press `/` to search. Use `n` / `Shift+n` to move through matches.</p>
-            <div className="search-suggestion-row">
-              {SEARCH_SUGGESTIONS.map((suggestion) => (
-                <button
-                  key={suggestion}
-                  className="secondary compact search-suggestion"
-                  type="button"
-                  onClick={() => onSearchQueryChange(suggestion)}
-                >
-                  {suggestion}
-                </button>
-              ))}
+      <div className="workspace-scroll">
+        <div className="review-layout-grid">
+          <section className="workspace-card workspace-card-hero review-capture-card">
+            <div className="section-row">
+              <h3>Current capture</h3>
+              <span className="note-status">{noteStatusText}</span>
             </div>
-          </>
-        ) : null}
-        {captureSearchQuery.trim().length > 0 ? (
-          <>
-            <p className="storage-meta">Local search across notes, OCR text, app metadata, time hints, and filters like app:, window:, tag:, bookmarked, favorite.</p>
-            {isRetrievalLoading ? <p className="storage-meta">Searching archive...</p> : null}
-            {retrievalError ? <p className="storage-meta">{retrievalError}</p> : null}
-            {!isRetrievalLoading && !retrievalError ? (
-              retrievalResults.length > 0 ? (
-                <div className="retrieval-results" role="list" aria-label="Archive search results">
-                  {retrievalResults.map((result, index) => (
+
+            <p className="workspace-meta-line">{selectedCaptureSummary}</p>
+            {selectedWindowLabel ? <p className="workspace-meta-line workspace-meta-line-secondary">{selectedWindowLabel}</p> : null}
+
+            <div className="retrieval-result-badges review-state-badges">
+              {selectedCapture?.isBookmarked ? <span className="source-pill">bookmarked</span> : null}
+              {selectedCapture?.isFavorite ? <span className="source-pill">favorite</span> : null}
+              <span className="source-pill">{compareCaptureLabel ? "compare ready" : "compare empty"}</span>
+            </div>
+
+            <div className="review-action-row">
+              <button className="secondary compact" type="button" onClick={onToggleBookmark} disabled={!selectedCapture || isReviewBusy}>
+                {selectedCapture?.isBookmarked ? "unbookmark" : "bookmark"}
+              </button>
+              <button className="secondary compact" type="button" onClick={onToggleFavorite} disabled={!selectedCapture || isReviewBusy}>
+                {selectedCapture?.isFavorite ? "unfavorite" : "favorite"}
+              </button>
+              {compareCaptureLabel ? (
+                <button className="secondary compact" type="button" onClick={onClearCompareAnchor} disabled={isReviewBusy}>
+                  clear compare
+                </button>
+              ) : (
+                <button className="secondary compact" type="button" onClick={onSetCompareAnchor} disabled={!selectedCapture || isReviewBusy}>
+                  set compare
+                </button>
+              )}
+              <button className="secondary compact" type="button" onClick={onRedactCapture} disabled={!selectedCapture || isReviewBusy}>
+                redact capture
+              </button>
+            </div>
+
+            <label className="field-block review-note-field" htmlFor="review-note-input">
+              <span>Capture note</span>
+              <textarea
+                id="review-note-input"
+                value={noteDraft}
+                placeholder={selectedCapture ? "Add a note to this capture..." : "Select a capture to write a note..."}
+                disabled={!selectedCapture}
+                onChange={(event) => onNoteDraftChange(event.currentTarget.value)}
+                onBlur={() => {
+                  if (noteDirty) {
+                    onSaveNote();
+                  }
+                }}
+              />
+            </label>
+            <div className="review-inline-actions">
+              <button className="secondary compact" type="button" onClick={onSaveNote} disabled={!selectedCapture || !noteDirty}>
+                save note
+              </button>
+            </div>
+          </section>
+
+          <section className="workspace-card review-tag-card">
+            <h3>Tags and filters</h3>
+            <label className="field-block" htmlFor="review-capture-tags-input">
+              <span>Capture tags</span>
+              <input
+                id="review-capture-tags-input"
+                type="text"
+                value={tagDraft}
+                placeholder="roadmap, launch, meeting"
+                disabled={!selectedCapture}
+                onChange={(event) => onTagDraftChange(event.currentTarget.value)}
+              />
+            </label>
+            <div className="review-inline-actions">
+              <button className="secondary compact" type="button" onClick={onSaveTags} disabled={!selectedCapture || isReviewBusy}>
+                save tags
+              </button>
+            </div>
+
+            {selectedCapture?.tags.length ? (
+              <div className="review-shortcuts-grid">
+                <p className="workspace-subtitle">On this capture</p>
+                <div className="retrieval-result-badges">
+                  {selectedCapture.tags.map((tag) => (
                     <button
-                      key={result.captureId}
-                      className={index === activeRetrievalResultIndex ? "retrieval-result active" : "retrieval-result"}
+                      key={`${selectedCapture.id}-selected-tag-${tag}`}
+                      className="source-pill source-pill-button"
                       type="button"
-                      onClick={() => onSelectSearchResult(result)}
+                      onClick={() => {
+                        onApplyTagFilter(tag);
+                        onOpenBrowseWorkspace();
+                      }}
                     >
-                      <div className="retrieval-result-header">
-                        <strong>
-                          {formatViewerDate(result.dayKey)} · {result.timestampLabel}
-                        </strong>
-                        <div className="retrieval-result-badges">
-                          {result.matchSources.length > 0
-                            ? result.matchSources.slice(0, 4).map((source) => (
-                                <span key={`${result.captureId}-${source}`} className="source-pill">
-                                  {formatMatchSourceLabel(source)}
-                                </span>
-                              ))
-                            : [<span key={`${result.captureId}-match`} className="source-pill">match</span>]}
-                          {result.isBookmarked ? <span className="source-pill">bookmarked</span> : null}
-                          {result.isFavorite ? <span className="source-pill">favorite</span> : null}
-                          {result.tags.slice(0, 2).map((tag) => (
-                            <span key={`${result.captureId}-tag-${tag}`} className="source-pill">
-                              #{tag}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                      <span>{result.matchReason}</span>
-                      <small>{renderHighlightedSnippet(result.snippet, result.highlightTerms)}</small>
+                      #{tag}
                     </button>
                   ))}
                 </div>
-              ) : (
-                <p className="storage-meta">No matches yet. Try broader terms or a time hint like "around 2 PM".</p>
-              )
-            ) : null}
-          </>
-        ) : null}
-      </section>
+              </div>
+            ) : (
+              <p className="storage-meta">No tags on the current capture yet.</p>
+            )}
 
-      <section className="utility-section intelligence-section">
-        <div className="section-row intelligence-head">
-          <h3>Day Intelligence</h3>
-          {dayIntelligence ? (
-            <span className="source-pill intelligence-session-pill">{dayIntelligence.focusBlocks.length} sessions</span>
-          ) : null}
+            {reviewShortcuts.tags.length > 0 ? (
+              <div className="review-shortcuts-grid">
+                <p className="workspace-subtitle">Top tags across saved moments</p>
+                <div className="retrieval-result-badges">
+                  {reviewShortcuts.tags.slice(0, 12).map((tag) => (
+                    <button
+                      key={`tag-shortcut-${tag.tag}`}
+                      className="source-pill source-pill-button"
+                      type="button"
+                      onClick={() => {
+                        onApplyTagFilter(tag.tag);
+                        onOpenBrowseWorkspace();
+                      }}
+                    >
+                      #{tag.tag} ({tag.captureCount})
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </section>
+
+          <section className="workspace-card review-library-card">
+            <h3>Saved moments</h3>
+
+            <div className="review-library-grid">
+              <div className="review-library-column">
+                <p className="workspace-subtitle">Bookmarks</p>
+                {bookmarkedShortcuts.length === 0 ? (
+                  <p className="storage-meta">No bookmarks yet.</p>
+                ) : (
+                  <div className="review-shortcuts-grid">
+                    {bookmarkedShortcuts.map((shortcut) => (
+                      <button
+                        key={`bookmark-${shortcut.captureId}`}
+                        className="secondary compact review-jump"
+                        type="button"
+                        onClick={() => {
+                          onJumpToReviewCapture(shortcut.captureId);
+                          onOpenBrowseWorkspace();
+                        }}
+                      >
+                        {formatViewerDate(shortcut.dayKey)} · {shortcut.timestampLabel}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="review-library-column">
+                <p className="workspace-subtitle">Favorites</p>
+                {favoriteShortcuts.length === 0 ? (
+                  <p className="storage-meta">No favorites yet.</p>
+                ) : (
+                  <div className="review-shortcuts-grid">
+                    {favoriteShortcuts.map((shortcut) => (
+                      <button
+                        key={`favorite-${shortcut.captureId}`}
+                        className="secondary compact review-jump"
+                        type="button"
+                        onClick={() => {
+                          onJumpToReviewCapture(shortcut.captureId);
+                          onOpenBrowseWorkspace();
+                        }}
+                      >
+                        {formatViewerDate(shortcut.dayKey)} · {shortcut.timestampLabel}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
         </div>
-        {dayIntelligenceLoading ? <p className="storage-meta">Summarizing this day...</p> : null}
-        {dayIntelligenceError ? <p className="storage-meta">{dayIntelligenceError}</p> : null}
+      </div>
+    </main>
+  );
+}
+
+function IntelligenceWorkspace({
+  dayIntelligence,
+  dayIntelligenceError,
+  dayIntelligenceLoading,
+  onOpenBrowseWorkspace,
+  onOpenReviewWorkspace,
+  onSearchForTerm,
+  selectedDayLabel,
+  selectedDaySummary,
+}: IntelligenceWorkspaceProps) {
+  const topThemes = dayIntelligence?.topTerms ?? [];
+  const focusBlocks = dayIntelligence?.focusBlocks ?? [];
+  const changeHighlights = dayIntelligence?.changeHighlights ?? [];
+  const focusPreview = dayIntelligence?.focusBlocks.slice(0, 8) ?? [];
+  const focusOverflow = dayIntelligence?.focusBlocks.slice(8) ?? [];
+  const highlightsPreview = dayIntelligence?.changeHighlights.slice(0, 10) ?? [];
+  const highlightsOverflow = dayIntelligence?.changeHighlights.slice(10) ?? [];
+
+  return (
+    <main className="panel viewer-pane workspace-pane intelligence-workspace">
+      <div className="workspace-head">
+        <div>
+          <p className="section-title">Workspace</p>
+          <h2>Day intelligence</h2>
+          <p className="workspace-lead">Session-level context and day shifts for {selectedDayLabel}.</p>
+        </div>
+        <div className="workspace-head-actions">
+          <button className="secondary compact" type="button" onClick={onOpenBrowseWorkspace}>
+            browse workspace
+          </button>
+          <button className="secondary compact" type="button" onClick={onOpenReviewWorkspace}>
+            review workspace
+          </button>
+        </div>
+      </div>
+
+      <div className="workspace-scroll">
+        <section className="workspace-card workspace-card-hero intelligence-section intelligence-overview-card">
+          <div className="section-row intelligence-head">
+            <h3>Day overview</h3>
+            <span className="source-pill">{selectedDaySummary.captureCount} captures</span>
+          </div>
+
+          {dayIntelligenceLoading ? <p className="storage-meta">Summarizing this day...</p> : null}
+          {dayIntelligenceError ? <p className="storage-meta warning">{dayIntelligenceError}</p> : null}
+
+          {!dayIntelligenceLoading && !dayIntelligenceError && dayIntelligence ? (
+            <>
+              <p className="storage-meta intelligence-summary">{dayIntelligence.summary}</p>
+              <div className="intelligence-metric-grid">
+                <article className="intelligence-metric">
+                  <span>sessions</span>
+                  <strong>{focusBlocks.length}</strong>
+                </article>
+                <article className="intelligence-metric">
+                  <span>change notes</span>
+                  <strong>{changeHighlights.length}</strong>
+                </article>
+                <article className="intelligence-metric">
+                  <span>theme signals</span>
+                  <strong>{topThemes.length}</strong>
+                </article>
+              </div>
+
+              <p className="storage-meta">
+                Generated in {dayIntelligence.generationMs}ms at {dayIntelligence.generatedAt}
+              </p>
+
+              {topThemes.length > 0 ? (
+                <>
+                  <p className="workspace-subtitle">Top themes</p>
+                  <div className="retrieval-result-badges intelligence-themes">
+                    {topThemes.map((term) => (
+                      <button
+                        key={`intelligence-term-${term}`}
+                        className="source-pill source-pill-button"
+                        type="button"
+                        onClick={() => onSearchForTerm(term)}
+                      >
+                        {term}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="storage-meta">Pick a theme to return to Browse with a filtered query.</p>
+                </>
+              ) : null}
+            </>
+          ) : null}
+
+          {!dayIntelligenceLoading && !dayIntelligenceError && !dayIntelligence ? (
+            <p className="storage-meta">No intelligence summary available for this day yet.</p>
+          ) : null}
+        </section>
+
         {!dayIntelligenceLoading && !dayIntelligenceError && dayIntelligence ? (
           <>
-            <p className="storage-meta intelligence-summary">{dayIntelligence.summary}</p>
-
-            {topThemePreview.length > 0 ? (
-              <div className="retrieval-result-badges intelligence-themes" aria-label="Top themes">
-                {topThemePreview.map((term, index) => (
-                  <span key={`term-${index}-${term}`} className="source-pill">
-                    {term}
-                  </span>
-                ))}
+            <section className="workspace-card intelligence-section intelligence-session-card">
+              <div className="section-row intelligence-head">
+                <h3>Focus sessions</h3>
+                <span className="source-pill intelligence-session-pill">
+                  {dayIntelligence.focusBlocks.length} session{dayIntelligence.focusBlocks.length === 1 ? "" : "s"}
+                </span>
               </div>
-            ) : null}
 
-            {focusPreview.length > 0 ? (
-              <div className="intelligence-blocks">
-                {focusPreview.map((block) => (
-                  <article key={`${block.startTimestampLabel}-${block.endTimestampLabel}`} className="intelligence-block">
-                    <strong>
-                      {block.startTimestampLabel} - {block.endTimestampLabel}
-                    </strong>
-                    <span>{block.captureCount} captures</span>
-                    <p>{block.dominantContext}</p>
-                  </article>
-                ))}
-              </div>
-            ) : null}
-
-            {focusOverflow.length > 0 ? (
-              <details className="intelligence-fold">
-                <summary>Show {focusOverflow.length} more session{focusOverflow.length === 1 ? "" : "s"}</summary>
-                <div className="intelligence-blocks intelligence-blocks-overflow">
-                  {focusOverflow.map((block) => (
+              {focusPreview.length > 0 ? (
+                <div className="intelligence-blocks intelligence-blocks-workspace">
+                  {focusPreview.map((block) => (
                     <article key={`${block.startTimestampLabel}-${block.endTimestampLabel}`} className="intelligence-block">
                       <strong>
                         {block.startTimestampLabel} - {block.endTimestampLabel}
@@ -1347,171 +1595,284 @@ function UtilityRail({
                     </article>
                   ))}
                 </div>
-              </details>
-            ) : null}
+              ) : (
+                <p className="storage-meta">No sessions yet. Capture activity will appear here automatically.</p>
+              )}
 
-            {highlightsPreview.length > 0 ? (
-              <>
-                <p className="intelligence-subtitle">What changed today</p>
+              {focusOverflow.length > 0 ? (
+                <details className="intelligence-fold">
+                  <summary>Show {focusOverflow.length} more session{focusOverflow.length === 1 ? "" : "s"}</summary>
+                  <div className="intelligence-blocks intelligence-blocks-overflow intelligence-blocks-workspace">
+                    {focusOverflow.map((block) => (
+                      <article key={`${block.startTimestampLabel}-${block.endTimestampLabel}`} className="intelligence-block">
+                        <strong>
+                          {block.startTimestampLabel} - {block.endTimestampLabel}
+                        </strong>
+                        <span>{block.captureCount} captures</span>
+                        <p>{block.dominantContext}</p>
+                      </article>
+                    ))}
+                  </div>
+                </details>
+              ) : null}
+            </section>
+
+            <section className="workspace-card intelligence-section intelligence-change-card">
+              <h3>What changed today</h3>
+              {highlightsPreview.length > 0 ? (
                 <ul className="intelligence-highlights">
                   {highlightsPreview.map((highlight, index) => (
                     <li key={`highlight-preview-${index}-${highlight}`}>{highlight}</li>
                   ))}
                 </ul>
-              </>
-            ) : null}
+              ) : (
+                <p className="storage-meta">No major context shifts detected for this day.</p>
+              )}
 
-            {highlightsOverflow.length > 0 ? (
-              <details className="intelligence-fold">
-                <summary>Show {highlightsOverflow.length} more change note{highlightsOverflow.length === 1 ? "" : "s"}</summary>
-                <ul className="intelligence-highlights intelligence-highlights-overflow">
-                  {highlightsOverflow.map((highlight, index) => (
-                    <li key={`highlight-overflow-${index}-${highlight}`}>{highlight}</li>
-                  ))}
-                </ul>
-              </details>
-            ) : null}
-
-            {highlightsPreview.length === 0 && highlightsOverflow.length === 0 ? (
-              <p className="storage-meta">No major context shifts detected for this day.</p>
-            ) : null}
-
-            {dayIntelligence.focusBlocks.length === 0 ? (
-              <p className="storage-meta">No sessions yet. Captures will appear here as your day fills in.</p>
-            ) : null}
+              {highlightsOverflow.length > 0 ? (
+                <details className="intelligence-fold">
+                  <summary>
+                    Show {highlightsOverflow.length} more change note{highlightsOverflow.length === 1 ? "" : "s"}
+                  </summary>
+                  <ul className="intelligence-highlights intelligence-highlights-overflow">
+                    {highlightsOverflow.map((highlight, index) => (
+                      <li key={`highlight-overflow-${index}-${highlight}`}>{highlight}</li>
+                    ))}
+                  </ul>
+                </details>
+              ) : null}
+            </section>
           </>
         ) : null}
-      </section>
+      </div>
+    </main>
+  );
+}
 
-      <section className="utility-section">
+function UtilityRail({
+  activeRetrievalResultIndex,
+  captureSearchQuery,
+  compareCaptureLabel,
+  dayIntelligence,
+  dayIntelligenceError,
+  dayIntelligenceLoading,
+  intervalMinutes,
+  isRetrievalLoading,
+  isRecording,
+  nextCaptureLabel,
+  ocrHealth,
+  performanceSnapshot,
+  retrievalError,
+  retrievalResults,
+  onCaptureNow,
+  onDeleteDay,
+  onOpenBrowseWorkspace,
+  onOpenIntelligenceWorkspace,
+  onOpenReviewWorkspace,
+  onSelectSearchResult,
+  onSearchQueryChange,
+  onTogglePause,
+  searchInputRef,
+  selectedCapture,
+  selectedDaySummary,
+  storageStats,
+  todayCaptureCount,
+  workspaceMode,
+}: UtilityRailProps) {
+  const isBrowseWorkspace = workspaceMode === "browse";
+  const isReviewWorkspace = workspaceMode === "review";
+  const isIntelligenceWorkspace = workspaceMode === "intelligence";
+  const workspaceLabel =
+    workspaceMode === "browse" ? "Browse" : workspaceMode === "review" ? "Review tools" : "Day intelligence";
+  const topThemePreview = dayIntelligence?.topTerms.slice(0, 4) ?? [];
+
+  return (
+    <aside className="panel utility-rail">
+      <section className="utility-section workspace-switcher-section">
         <div className="section-row">
-          <h3>Note This Capture</h3>
-          <span className="note-status">{noteStatusLabel}</span>
+          <h3>Workspace</h3>
+          <span className="source-pill">{workspaceLabel}</span>
         </div>
-        <textarea
-          value={noteDraft}
-          placeholder={selectedCapture ? "Add a note to this capture..." : "Select a capture to write a note..."}
-          disabled={!selectedCapture}
-          onChange={(event) => onNoteDraftChange(event.currentTarget.value)}
-          onBlur={() => {
-            if (noteDirty) {
-              onSaveNote();
-            }
-          }}
-        />
-        <button className="secondary compact" type="button" onClick={onSaveNote} disabled={!selectedCapture || !noteDirty}>
-          save note
-        </button>
+
+        <div className="workspace-switch-grid">
+          <button className="secondary compact" type="button" onClick={onOpenBrowseWorkspace} disabled={isBrowseWorkspace}>
+            browse
+          </button>
+          <button className="secondary compact" type="button" onClick={onOpenReviewWorkspace} disabled={isReviewWorkspace}>
+            review
+          </button>
+          <button
+            className="secondary compact"
+            type="button"
+            onClick={onOpenIntelligenceWorkspace}
+            disabled={isIntelligenceWorkspace}
+          >
+            day intelligence
+          </button>
+        </div>
+
+        <p className="storage-meta">R review · I intelligence · V browse</p>
       </section>
 
-      <section className="utility-section">
-        <h3>Review Tools</h3>
-        {compareCaptureLabel ? <p className="storage-meta">Compare anchor: {compareCaptureLabel}</p> : null}
-        <div className="review-actions-grid">
-          <button className="secondary compact" type="button" onClick={onToggleBookmark} disabled={!selectedCapture || isReviewBusy}>
-            {selectedCapture?.isBookmarked ? "unbookmark" : "bookmark"}
-          </button>
-          <button className="secondary compact" type="button" onClick={onToggleFavorite} disabled={!selectedCapture || isReviewBusy}>
-            {selectedCapture?.isFavorite ? "unfavorite" : "favorite"}
-          </button>
-          {compareCaptureLabel ? (
-            <button className="secondary compact" type="button" onClick={onClearCompareAnchor} disabled={isReviewBusy}>
-              clear compare
-            </button>
-          ) : (
-            <button className="secondary compact" type="button" onClick={onSetCompareAnchor} disabled={!selectedCapture || isReviewBusy}>
-              set compare
-            </button>
-          )}
-          <button className="secondary compact" type="button" onClick={onRedactCapture} disabled={!selectedCapture || isReviewBusy}>
-            redact capture
-          </button>
-        </div>
-
-        <label className="field-block" htmlFor="capture-tags-input">
-          <span>Tags (comma separated)</span>
-          <input
-            id="capture-tags-input"
-            type="text"
-            value={tagDraft}
-            placeholder="roadmap, launch, meeting"
-            disabled={!selectedCapture}
-            onChange={(event) => onTagDraftChange(event.currentTarget.value)}
-          />
-        </label>
-        <button className="secondary compact" type="button" onClick={onSaveTags} disabled={!selectedCapture || isReviewBusy}>
-          save tags
-        </button>
-
-        {selectedCapture?.tags.length ? (
-          <div className="retrieval-result-badges">
-            {selectedCapture.tags.map((tag) => (
-              <button
-                key={`${selectedCapture.id}-selected-tag-${tag}`}
-                className="source-pill source-pill-button"
-                type="button"
-                onClick={() => onApplyTagFilter(tag)}
-              >
-                #{tag}
-              </button>
-            ))}
-          </div>
-        ) : null}
-
-        <div className="review-shortcuts-grid">
-          <p className="storage-meta">Bookmarks</p>
-          {reviewShortcuts.bookmarks.length === 0 ? (
-            <p className="storage-meta">No bookmarks yet.</p>
-          ) : (
-            reviewShortcuts.bookmarks.slice(0, 4).map((shortcut) => (
-              <button
-                key={`bookmark-${shortcut.captureId}`}
-                className="secondary compact review-jump"
-                type="button"
-                onClick={() => onJumpToReviewCapture(shortcut.captureId)}
-              >
-                {formatViewerDate(shortcut.dayKey)} · {shortcut.timestampLabel}
-              </button>
-            ))
-          )}
-        </div>
-
-        <div className="review-shortcuts-grid">
-          <p className="storage-meta">Favorites</p>
-          {reviewShortcuts.favorites.length === 0 ? (
-            <p className="storage-meta">No favorites yet.</p>
-          ) : (
-            reviewShortcuts.favorites.slice(0, 4).map((shortcut) => (
-              <button
-                key={`favorite-${shortcut.captureId}`}
-                className="secondary compact review-jump"
-                type="button"
-                onClick={() => onJumpToReviewCapture(shortcut.captureId)}
-              >
-                {formatViewerDate(shortcut.dayKey)} · {shortcut.timestampLabel}
-              </button>
-            ))
-          )}
-        </div>
-
-        {reviewShortcuts.tags.length > 0 ? (
-          <div className="review-shortcuts-grid">
-            <p className="storage-meta">Top tags</p>
-            <div className="retrieval-result-badges">
-              {reviewShortcuts.tags.slice(0, 8).map((tag) => (
-                <button
-                  key={`tag-shortcut-${tag.tag}`}
-                  className="source-pill source-pill-button"
-                  type="button"
-                  onClick={() => onApplyTagFilter(tag.tag)}
-                >
-                  #{tag.tag} ({tag.captureCount})
-                </button>
-              ))}
+      {isBrowseWorkspace ? (
+        <>
+          <section className="utility-section">
+            <h3>Today</h3>
+            <div className="today-stat-grid">
+              <div>
+                <strong>{todayCaptureCount}</strong>
+                <span>captures</span>
+              </div>
+              <div>
+                <strong>{intervalMinutes}m</strong>
+                <span>cadence</span>
+              </div>
             </div>
+          </section>
+
+          <section className="utility-section">
+            <h3>Search Captures</h3>
+            <div className="search-command">
+              <span className="search-command-key">/</span>
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={captureSearchQuery}
+                placeholder="Search notes, OCR, apps, or around 3 PM..."
+                onChange={(event) => onSearchQueryChange(event.currentTarget.value)}
+              />
+            </div>
+            {!ocrHealth.engineAvailable ? <p className="storage-meta warning">{ocrHealth.statusMessage}</p> : null}
+            {captureSearchQuery.trim().length === 0 ? (
+              <>
+                <p className="storage-meta">Press `/` to search. Use `n` / `Shift+n` to move through matches.</p>
+                <div className="search-suggestion-row">
+                  {SEARCH_SUGGESTIONS.map((suggestion) => (
+                    <button
+                      key={suggestion}
+                      className="secondary compact search-suggestion"
+                      type="button"
+                      onClick={() => onSearchQueryChange(suggestion)}
+                    >
+                      {suggestion}
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : null}
+            {captureSearchQuery.trim().length > 0 ? (
+              <>
+                <p className="storage-meta">
+                  Local search across notes, OCR text, app metadata, time hints, and filters like app:, window:, tag:,
+                  bookmarked, favorite.
+                </p>
+                {isRetrievalLoading ? <p className="storage-meta">Searching archive...</p> : null}
+                {retrievalError ? <p className="storage-meta">{retrievalError}</p> : null}
+                {!isRetrievalLoading && !retrievalError ? (
+                  retrievalResults.length > 0 ? (
+                    <div className="retrieval-results" role="list" aria-label="Archive search results">
+                      {retrievalResults.map((result, index) => (
+                        <button
+                          key={result.captureId}
+                          className={index === activeRetrievalResultIndex ? "retrieval-result active" : "retrieval-result"}
+                          type="button"
+                          onClick={() => onSelectSearchResult(result)}
+                        >
+                          <div className="retrieval-result-header">
+                            <strong>
+                              {formatViewerDate(result.dayKey)} · {result.timestampLabel}
+                            </strong>
+                            <div className="retrieval-result-badges">
+                              {result.matchSources.length > 0
+                                ? result.matchSources.slice(0, 4).map((source) => (
+                                    <span key={`${result.captureId}-${source}`} className="source-pill">
+                                      {formatMatchSourceLabel(source)}
+                                    </span>
+                                  ))
+                                : [
+                                    <span key={`${result.captureId}-match`} className="source-pill">
+                                      match
+                                    </span>,
+                                  ]}
+                              {result.isBookmarked ? <span className="source-pill">bookmarked</span> : null}
+                              {result.isFavorite ? <span className="source-pill">favorite</span> : null}
+                              {result.tags.slice(0, 2).map((tag) => (
+                                <span key={`${result.captureId}-tag-${tag}`} className="source-pill">
+                                  #{tag}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                          <span>{result.matchReason}</span>
+                          <small>{renderHighlightedSnippet(result.snippet, result.highlightTerms)}</small>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <>
+                      <p className="storage-meta">No matches yet. Try broader terms or a time hint like "around 2 PM".</p>
+                      <div className="empty-inline-actions">
+                        <button className="secondary compact" type="button" onClick={() => onSearchQueryChange("")}>
+                          clear query
+                        </button>
+                        <button
+                          className="secondary compact"
+                          type="button"
+                          onClick={() => onSearchQueryChange("around 3 PM yesterday")}
+                        >
+                          try a time hint
+                        </button>
+                      </div>
+                    </>
+                  )
+                ) : null}
+              </>
+            ) : null}
+          </section>
+        </>
+      ) : null}
+
+      {isReviewWorkspace ? (
+        <section className="utility-section">
+          <h3>Review context</h3>
+          <p className="storage-meta">
+            {selectedCapture
+              ? `${selectedCapture.timestampLabel} · ${selectedCapture.processName || "Unknown app"}`
+              : "No capture selected in this day."}
+          </p>
+          <p className="storage-meta">
+            {compareCaptureLabel ? `Compare anchor: ${compareCaptureLabel}` : "No compare anchor set."}
+          </p>
+          <p className="storage-meta">Use the Review workspace to manage notes, tags, bookmarks, and favorites.</p>
+        </section>
+      ) : null}
+
+      {isIntelligenceWorkspace ? (
+        <section className="utility-section intelligence-section">
+          <div className="section-row intelligence-head">
+            <h3>Intelligence context</h3>
+            {dayIntelligence ? (
+              <span className="source-pill intelligence-session-pill">{dayIntelligence.focusBlocks.length} sessions</span>
+            ) : null}
           </div>
-        ) : null}
-      </section>
+          {dayIntelligenceLoading ? <p className="storage-meta">Summarizing this day...</p> : null}
+          {dayIntelligenceError ? <p className="storage-meta warning">{dayIntelligenceError}</p> : null}
+          {!dayIntelligenceLoading && !dayIntelligenceError && dayIntelligence ? (
+            <>
+              <p className="storage-meta intelligence-summary">{dayIntelligence.summary}</p>
+              {topThemePreview.length > 0 ? (
+                <div className="retrieval-result-badges intelligence-themes">
+                  {topThemePreview.map((term, index) => (
+                    <span key={`intelligence-preview-term-${index}-${term}`} className="source-pill">
+                      {term}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+            </>
+          ) : null}
+        </section>
+      ) : null}
 
       <section className="utility-section">
         <h3>Recording</h3>
@@ -1611,6 +1972,19 @@ function SettingsModal({
   storagePath,
   storageStats,
 }: SettingsModalProps) {
+  const appearanceSectionRef = useRef<HTMLElement | null>(null);
+  const privacySectionRef = useRef<HTMLElement | null>(null);
+  const cadenceSectionRef = useRef<HTMLElement | null>(null);
+  const storageSectionRef = useRef<HTMLElement | null>(null);
+  const backupSectionRef = useRef<HTMLElement | null>(null);
+
+  const scrollToSettingsSection = (sectionRef: MutableRefObject<HTMLElement | null>) => {
+    sectionRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  };
+
   const activeThemeOption = themeOptions.find((themeOption) => themeOption.id === draftThemeId);
   const savedThemeOption = themeOptions.find((themeOption) => themeOption.id === themeId);
 
@@ -1641,7 +2015,27 @@ function SettingsModal({
           </div>
         </div>
 
-        <section className="settings-section">
+        <nav className="settings-quick-nav" aria-label="Settings sections">
+          <button className="secondary compact" type="button" onClick={() => scrollToSettingsSection(appearanceSectionRef)}>
+            appearance
+          </button>
+          <button className="secondary compact" type="button" onClick={() => scrollToSettingsSection(privacySectionRef)}>
+            privacy
+          </button>
+          <button className="secondary compact" type="button" onClick={() => scrollToSettingsSection(cadenceSectionRef)}>
+            cadence
+          </button>
+          <button className="secondary compact" type="button" onClick={() => scrollToSettingsSection(storageSectionRef)}>
+            storage
+          </button>
+          <button className="secondary compact" type="button" onClick={() => scrollToSettingsSection(backupSectionRef)}>
+            backup
+          </button>
+        </nav>
+
+        <p className="settings-keyboard-hint">Press Esc to close settings. Press ? any time for the keyboard guide.</p>
+
+        <section className="settings-section" ref={appearanceSectionRef}>
           <div className="settings-section-head">
             <h4 className="settings-section-title">
               <svg className="settings-section-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -1685,7 +2079,7 @@ function SettingsModal({
           </div>
         </section>
 
-        <section className="settings-section">
+        <section className="settings-section" ref={privacySectionRef}>
           <div className="settings-section-head">
             <h4 className="settings-section-title">
               <svg className="settings-section-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -1781,7 +2175,7 @@ function SettingsModal({
           </div>
         </section>
 
-        <section className="settings-section">
+        <section className="settings-section" ref={cadenceSectionRef}>
           <div className="settings-section-head">
             <h4 className="settings-section-title">
               <svg className="settings-section-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -1844,7 +2238,7 @@ function SettingsModal({
           </label>
         </section>
 
-        <section className="settings-section">
+        <section className="settings-section" ref={storageSectionRef}>
           <div className="settings-section-head">
             <h4 className="settings-section-title">
               <svg className="settings-section-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -1920,7 +2314,7 @@ function SettingsModal({
           <p className="path-readout">{storagePath}</p>
         </section>
 
-        <section className="settings-section">
+        <section className="settings-section" ref={backupSectionRef}>
           <div className="settings-section-head">
             <h4 className="settings-section-title">
               <svg className="settings-section-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -2073,6 +2467,201 @@ function ThemeOnboardingModal({
   );
 }
 
+function QuickStartModal({
+  intervalMinutes,
+  onCaptureNow,
+  onClose,
+  onOpenSettings,
+  onOpenShortcuts,
+}: QuickStartModalProps) {
+  return (
+    <div className="settings-overlay" role="presentation" onClick={onClose}>
+      <section
+        className="panel settings-modal quickstart-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="quickstart-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="settings-modal-head">
+          <div>
+            <p className="section-title">Welcome to MemoryLane</p>
+            <h3 id="quickstart-title">Quick start guide</h3>
+            <p className="section-meta">Set once, then capture quietly in the background.</p>
+          </div>
+        </div>
+
+        <div className="quickstart-grid">
+          <article className="quickstart-card">
+            <h4>Tray behavior</h4>
+            <p>
+              Installed builds keep MemoryLane in the system tray after closing the window, so capture can continue.
+            </p>
+          </article>
+
+          <article className="quickstart-card">
+            <h4>Capture cadence</h4>
+            <p>
+              Current cadence is every {intervalMinutes} minute{intervalMinutes === 1 ? "" : "s"}. Use <strong>Space</strong> to pause or <strong>C</strong> to capture now.
+            </p>
+          </article>
+
+          <article className="quickstart-card">
+            <h4>Keyboard-first flow</h4>
+            <p>
+              Press <strong>/</strong> to search, <strong>?</strong> for shortcuts, <strong>R</strong>/<strong>I</strong>/<strong>V</strong> to switch workspaces, <strong>↑/↓</strong> to change day, and <strong>←/→</strong> to step captures.
+            </p>
+          </article>
+        </div>
+
+        <div className="quickstart-actions">
+          <button className="secondary" type="button" onClick={onOpenSettings}>
+            open settings
+          </button>
+          <button className="secondary" type="button" onClick={onCaptureNow}>
+            capture now
+          </button>
+          <button className="secondary" type="button" onClick={onOpenShortcuts}>
+            view shortcuts
+          </button>
+          <button className="secondary" type="button" onClick={onClose}>
+            continue
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function KeyboardShortcutsModal({ onClose, onOpenSettings }: KeyboardShortcutsModalProps) {
+  return (
+    <div className="settings-overlay" role="presentation" onClick={onClose}>
+      <section
+        className="panel settings-modal shortcuts-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="shortcuts-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="settings-modal-head">
+          <div>
+            <p className="section-title">Keyboard Guide</p>
+            <h3 id="shortcuts-title">Shortcuts</h3>
+            <p className="section-meta">Press Esc to close this guide.</p>
+          </div>
+        </div>
+
+        <div className="shortcut-groups">
+          <section className="shortcut-group" aria-label="Navigation shortcuts">
+            <h4>Navigation</h4>
+            <ul className="shortcut-list">
+              <li>
+                <kbd>↑ / ↓</kbd>
+                <span>Change day</span>
+              </li>
+              <li>
+                <kbd>[ / ]</kbd>
+                <span>Change day (alternate)</span>
+              </li>
+              <li>
+                <kbd>← / →</kbd>
+                <span>Previous or next capture</span>
+              </li>
+              <li>
+                <kbd>J / K</kbd>
+                <span>Capture stepping (alternate)</span>
+              </li>
+              <li>
+                <kbd>Home / End</kbd>
+                <span>Jump to first capture or now</span>
+              </li>
+            </ul>
+          </section>
+
+          <section className="shortcut-group" aria-label="Search and review shortcuts">
+            <h4>Search and review</h4>
+            <ul className="shortcut-list">
+              <li>
+                <kbd>/</kbd>
+                <span>Focus search</span>
+              </li>
+              <li>
+                <kbd>N / Shift+N</kbd>
+                <span>Next or previous search result</span>
+              </li>
+              <li>
+                <kbd>B</kbd>
+                <span>Toggle bookmark</span>
+              </li>
+              <li>
+                <kbd>F</kbd>
+                <span>Toggle favorite</span>
+              </li>
+              <li>
+                <kbd>Delete</kbd>
+                <span>Delete selected capture</span>
+              </li>
+            </ul>
+          </section>
+
+          <section className="shortcut-group" aria-label="Capture control shortcuts">
+            <h4>Capture controls</h4>
+            <ul className="shortcut-list">
+              <li>
+                <kbd>Space</kbd>
+                <span>Pause or resume capture</span>
+              </li>
+              <li>
+                <kbd>C</kbd>
+                <span>Capture now</span>
+              </li>
+              <li>
+                <kbd>O</kbd>
+                <span>Open captures folder</span>
+              </li>
+              <li>
+                <kbd>T</kbd>
+                <span>Jump to today</span>
+              </li>
+              <li>
+                <kbd>S</kbd>
+                <span>Open settings</span>
+              </li>
+            </ul>
+          </section>
+
+          <section className="shortcut-group" aria-label="Workspace shortcuts">
+            <h4>Workspaces</h4>
+            <ul className="shortcut-list">
+              <li>
+                <kbd>R</kbd>
+                <span>Open Review workspace</span>
+              </li>
+              <li>
+                <kbd>I</kbd>
+                <span>Open Day Intelligence workspace</span>
+              </li>
+              <li>
+                <kbd>V</kbd>
+                <span>Return to Browse workspace</span>
+              </li>
+            </ul>
+          </section>
+        </div>
+
+        <div className="quickstart-actions">
+          <button className="secondary" type="button" onClick={onOpenSettings}>
+            open settings
+          </button>
+          <button className="secondary" type="button" onClick={onClose}>
+            close
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function TimelineStrip({
   captures,
   hasNewerPages,
@@ -2081,8 +2670,11 @@ function TimelineStrip({
   isPageLoading,
   loadedEndOffset,
   loadedStartOffset,
+  onCaptureNow,
+  onClearSearch,
   onLoadNewer,
   onLoadOlder,
+  onOpenSettings,
   onSelectCapture,
   onSelectCaptureAtIndex,
   searchQuery,
@@ -2127,8 +2719,36 @@ function TimelineStrip({
 
       {captures.length === 0 ? (
         <div className="timeline-empty">
-          <p>No screenshots in this timeline view.</p>
-          <p className="muted">Try changing day or search query.</p>
+          <p>
+            {searchQuery.trim().length > 0
+              ? "No screenshots match this search for the selected day."
+              : selectedDayCaptureCount > 0
+                ? "No screenshots in this page window yet."
+                : "No screenshots yet for this day."}
+          </p>
+          <p className="muted">
+            {searchQuery.trim().length > 0
+              ? "Clear search or broaden filters to bring captures back into view."
+              : selectedDayCaptureCount > 0
+                ? "Try loading older or newer pages from the timeline controls."
+                : "Capture now or adjust cadence to begin building the timeline."}
+          </p>
+          <div className="empty-actions">
+            {searchQuery.trim().length > 0 ? (
+              <button className="secondary compact" type="button" onClick={onClearSearch}>
+                clear search
+              </button>
+            ) : (
+              <>
+                <button className="secondary compact" type="button" onClick={onCaptureNow}>
+                  capture now
+                </button>
+                <button className="secondary compact" type="button" onClick={onOpenSettings}>
+                  open settings
+                </button>
+              </>
+            )}
+          </div>
         </div>
       ) : (
         <>
@@ -2225,6 +2845,9 @@ function App() {
   const [isThemeOnboardingOpen, setIsThemeOnboardingOpen] = useState<boolean>(false);
   const [onboardingThemeId, setOnboardingThemeId] = useState<ThemeId>(ONBOARDING_THEME_ID);
   const [isThemeOnboardingSaving, setIsThemeOnboardingSaving] = useState<boolean>(false);
+  const [isQuickStartOpen, setIsQuickStartOpen] = useState<boolean>(false);
+  const [isShortcutGuideOpen, setIsShortcutGuideOpen] = useState<boolean>(false);
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("browse");
 
   const [storagePath, setStoragePath] = useState<string>("Resolving managed storage path...");
   const [storageStats, setStorageStats] = useState<StorageStatsPayload>({
@@ -2657,6 +3280,11 @@ function App() {
     setSensitiveCaptureMode(resolvedSensitiveMode);
     setOnboardingThemeId(needsThemeOnboarding ? ONBOARDING_THEME_ID : resolvedTheme);
     setIsThemeOnboardingOpen(needsThemeOnboarding);
+    if (needsThemeOnboarding) {
+      setIsQuickStartOpen(false);
+    } else if (!hasDismissedQuickStart()) {
+      setIsQuickStartOpen(true);
+    }
     setStorageStats(stats);
     setCaptureHealth(health);
     setPerformanceSnapshot(performance);
@@ -3040,6 +3668,35 @@ function App() {
       setActionMessage("Capture command failed. Check screen permissions and runtime logs.");
     }
   }, [refreshAll]);
+
+  const dismissQuickStart = useCallback((options?: { openSettings?: boolean; openShortcuts?: boolean }) => {
+    markQuickStartDismissed();
+    setIsQuickStartOpen(false);
+    if (options?.openSettings) {
+      setIsSettingsOpen(true);
+    }
+    if (options?.openShortcuts) {
+      setIsShortcutGuideOpen(true);
+    }
+  }, []);
+
+  const openBrowseWorkspace = useCallback(() => {
+    setWorkspaceMode("browse");
+  }, []);
+
+  const openReviewWorkspace = useCallback(() => {
+    setWorkspaceMode("review");
+  }, []);
+
+  const openIntelligenceWorkspace = useCallback(() => {
+    setWorkspaceMode("intelligence");
+  }, []);
+
+  const searchFromIntelligenceTerm = useCallback((term: string) => {
+    setCaptureSearchQuery(term);
+    setWorkspaceMode("browse");
+    setActionMessage(`Filtering captures with "${term}".`);
+  }, []);
 
   const openCaptureContext = useCallback(async (captureId: number) => {
     try {
@@ -3511,6 +4168,9 @@ function App() {
       setThemeId(nextThemeId);
       setDraftThemeId(nextThemeId);
       setIsThemeOnboardingOpen(false);
+      if (!hasDismissedQuickStart()) {
+        setIsQuickStartOpen(true);
+      }
       setActionMessage(`Theme set to ${themeName(nextThemeId)}.`);
     } catch {
       setActionMessage("Unable to save selected theme.");
@@ -3656,6 +4316,22 @@ function App() {
         return;
       }
 
+      if (isQuickStartOpen) {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          dismissQuickStart();
+        }
+        return;
+      }
+
+      if (isShortcutGuideOpen) {
+        if (event.key === "Escape" || event.key === "?") {
+          event.preventDefault();
+          setIsShortcutGuideOpen(false);
+        }
+        return;
+      }
+
       if (isSettingsOpen) {
         if (event.key === "Escape") {
           event.preventDefault();
@@ -3675,8 +4351,15 @@ function App() {
       switch (event.key) {
         case "/":
           event.preventDefault();
-          searchInputRef.current?.focus();
-          searchInputRef.current?.select();
+          setWorkspaceMode("browse");
+          window.requestAnimationFrame(() => {
+            searchInputRef.current?.focus();
+            searchInputRef.current?.select();
+          });
+          return;
+        case "?":
+          event.preventDefault();
+          setIsShortcutGuideOpen(true);
           return;
         case "Escape":
           if (captureSearchQuery.trim().length > 0) {
@@ -3689,8 +4372,27 @@ function App() {
         case "N":
           if (captureSearchQuery.trim().length > 0 && retrievalResults.length > 0) {
             event.preventDefault();
+            openBrowseWorkspace();
             void jumpThroughRetrievalResults(event.shiftKey ? -1 : 1);
           }
+          return;
+        case "r":
+        case "R":
+          event.preventDefault();
+          openReviewWorkspace();
+          setActionMessage("Switched to Review workspace.");
+          return;
+        case "i":
+        case "I":
+          event.preventDefault();
+          openIntelligenceWorkspace();
+          setActionMessage("Switched to Day Intelligence workspace.");
+          return;
+        case "v":
+        case "V":
+          event.preventDefault();
+          openBrowseWorkspace();
+          setActionMessage("Switched to Browse workspace.");
           return;
         case "ArrowLeft":
           event.preventDefault();
@@ -3707,6 +4409,24 @@ function App() {
         case "ArrowDown":
           event.preventDefault();
           shiftDay(1);
+          return;
+        case "[":
+          event.preventDefault();
+          shiftDay(1);
+          return;
+        case "]":
+          event.preventDefault();
+          shiftDay(-1);
+          return;
+        case "j":
+        case "J":
+          event.preventDefault();
+          shiftCapture(1);
+          return;
+        case "k":
+        case "K":
+          event.preventDefault();
+          shiftCapture(-1);
           return;
         case "Home":
           event.preventDefault();
@@ -3750,6 +4470,11 @@ function App() {
           event.preventDefault();
           void jumpToToday();
           return;
+        case "s":
+        case "S":
+          event.preventDefault();
+          setIsSettingsOpen(true);
+          return;
         case "F11":
           event.preventDefault();
           void toggleFullscreen();
@@ -3781,8 +4506,14 @@ function App() {
     loadNewerPage,
     loadOlderPage,
     openCapturesFolder,
+    openBrowseWorkspace,
+    openIntelligenceWorkspace,
+    openReviewWorkspace,
     shiftCapture,
     shiftDay,
+    dismissQuickStart,
+    isQuickStartOpen,
+    isShortcutGuideOpen,
     isThemeOnboardingOpen,
     isSettingsOpen,
     retrievalResults.length,
@@ -3873,6 +4604,7 @@ function App() {
           selectedDayLabel={selectedDayLabel}
           todayKey={todayKey}
           onJumpToNow={jumpToNow}
+          onOpenShortcuts={() => setIsShortcutGuideOpen(true)}
           onOpenSettings={() => setIsSettingsOpen(true)}
           onSelectDay={setSelectedDayKey}
           onSelectNextDay={() => shiftDay(-1)}
@@ -3887,31 +4619,78 @@ function App() {
           onJumpToToday={() => void jumpToToday()}
           onSelectDay={setSelectedDayKey}
         />
+        {workspaceMode === "browse" ? (
+          <ViewerPane
+            actionMessage={actionMessage}
+            captureHealth={captureHealth}
+            captures={filteredCaptures}
+            compareCaptureLabel={compareCaptureLabel}
+            compareImageDataUrl={compareImageDataUrl}
+            contextBadge={contextBadge}
+            isFilterActive={normalizedSearch.length > 0}
+            onCaptureNow={() => void triggerCaptureNow()}
+            onClearSearch={() => {
+              setCaptureSearchQuery("");
+              setActionMessage("Cleared search query.");
+            }}
+            onCopyPath={() => void copySelectedCapturePath()}
+            onClearCompareAnchor={clearCompareAnchor}
+            onDeleteCapture={() => void deleteSelectedCapture()}
+            onOpenSettings={() => setIsSettingsOpen(true)}
+            onOpenCapturesFolder={() => void openCapturesFolder()}
+            onRedactCapture={() => void redactSelectedCapture()}
+            onSetCompareAnchor={setCompareAnchor}
+            onSelectNext={() => shiftCapture(1)}
+            onSelectPrevious={() => shiftCapture(-1)}
+            onToggleBookmark={() => void toggleBookmark()}
+            onToggleFavorite={() => void toggleFavorite()}
+            selectedCapture={selectedCapture}
+            selectedCaptureIndex={selectedCaptureIndex}
+            selectedDayLabel={selectedDayLabel}
+            selectedDaySummary={selectedDaySummary}
+            selectedImageDataUrl={selectedImageDataUrl}
+          />
+        ) : null}
 
-        <ViewerPane
-          actionMessage={actionMessage}
-          captureHealth={captureHealth}
-          captures={filteredCaptures}
-          compareCaptureLabel={compareCaptureLabel}
-          compareImageDataUrl={compareImageDataUrl}
-          contextBadge={contextBadge}
-          isFilterActive={normalizedSearch.length > 0}
-          onCopyPath={() => void copySelectedCapturePath()}
-          onClearCompareAnchor={clearCompareAnchor}
-          onDeleteCapture={() => void deleteSelectedCapture()}
-          onOpenCapturesFolder={() => void openCapturesFolder()}
-          onRedactCapture={() => void redactSelectedCapture()}
-          onSetCompareAnchor={setCompareAnchor}
-          onSelectNext={() => shiftCapture(1)}
-          onSelectPrevious={() => shiftCapture(-1)}
-          onToggleBookmark={() => void toggleBookmark()}
-          onToggleFavorite={() => void toggleFavorite()}
-          selectedCapture={selectedCapture}
-          selectedCaptureIndex={selectedCaptureIndex}
-          selectedDayLabel={selectedDayLabel}
-          selectedDaySummary={selectedDaySummary}
-          selectedImageDataUrl={selectedImageDataUrl}
-        />
+        {workspaceMode === "review" ? (
+          <ReviewWorkspace
+            compareCaptureLabel={compareCaptureLabel}
+            isReviewBusy={isReviewBusy}
+            noteDirty={noteDirty}
+            noteDraft={noteDraft}
+            noteSaveState={noteSaveState}
+            onApplyTagFilter={applyTagFilter}
+            onClearCompareAnchor={clearCompareAnchor}
+            onJumpToReviewCapture={(captureId) => void jumpToReviewCapture(captureId)}
+            onNoteDraftChange={setNoteDraft}
+            onOpenBrowseWorkspace={openBrowseWorkspace}
+            onOpenIntelligenceWorkspace={openIntelligenceWorkspace}
+            onRedactCapture={() => void redactSelectedCapture()}
+            onSaveNote={() => void saveCaptureNote()}
+            onSaveTags={() => void saveCaptureTags()}
+            onSetCompareAnchor={setCompareAnchor}
+            onTagDraftChange={setTagDraft}
+            onToggleBookmark={() => void toggleBookmark()}
+            onToggleFavorite={() => void toggleFavorite()}
+            reviewShortcuts={reviewShortcuts}
+            selectedCapture={selectedCapture}
+            selectedDayLabel={selectedDayLabel}
+            tagDraft={tagDraft}
+          />
+        ) : null}
+
+        {workspaceMode === "intelligence" ? (
+          <IntelligenceWorkspace
+            dayIntelligence={dayIntelligence}
+            dayIntelligenceError={dayIntelligenceError}
+            dayIntelligenceLoading={isDayIntelligenceLoading}
+            onOpenBrowseWorkspace={openBrowseWorkspace}
+            onOpenReviewWorkspace={openReviewWorkspace}
+            onSearchForTerm={searchFromIntelligenceTerm}
+            selectedDayLabel={selectedDayLabel}
+            selectedDaySummary={selectedDaySummary}
+          />
+        ) : null}
 
         <UtilityRail
           activeRetrievalResultIndex={activeRetrievalResultIndex}
@@ -3921,28 +4700,18 @@ function App() {
           dayIntelligenceError={dayIntelligenceError}
           dayIntelligenceLoading={isDayIntelligenceLoading}
           intervalMinutes={intervalMinutes}
-          isReviewBusy={isReviewBusy}
           isRetrievalLoading={isRetrievalLoading}
           isRecording={isRecording}
           nextCaptureLabel={nextCaptureLabel}
-          noteDirty={noteDirty}
-          noteDraft={noteDraft}
-          noteSaveState={noteSaveState}
           ocrHealth={ocrHealth}
           performanceSnapshot={performanceSnapshot}
           retrievalError={retrievalError}
           retrievalResults={retrievalResults}
           onCaptureNow={() => void triggerCaptureNow()}
-          onClearCompareAnchor={clearCompareAnchor}
           onDeleteDay={() => void deleteSelectedDay()}
-          onJumpToReviewCapture={(captureId) => void jumpToReviewCapture(captureId)}
-          onApplyTagFilter={applyTagFilter}
-          onNoteDraftChange={setNoteDraft}
-          onTagDraftChange={setTagDraft}
-          onRedactCapture={() => void redactSelectedCapture()}
-          onSaveTags={() => void saveCaptureTags()}
-          onSetCompareAnchor={setCompareAnchor}
-          onSaveNote={() => void saveCaptureNote()}
+          onOpenBrowseWorkspace={openBrowseWorkspace}
+          onOpenIntelligenceWorkspace={openIntelligenceWorkspace}
+          onOpenReviewWorkspace={openReviewWorkspace}
           onSelectSearchResult={(result) => {
             const resultIndex = retrievalResults.findIndex((item) => item.captureId === result.captureId);
             if (resultIndex >= 0) {
@@ -3952,15 +4721,12 @@ function App() {
           }}
           onSearchQueryChange={setCaptureSearchQuery}
           onTogglePause={() => void togglePauseResume()}
-          onToggleBookmark={() => void toggleBookmark()}
-          onToggleFavorite={() => void toggleFavorite()}
-          reviewShortcuts={reviewShortcuts}
           searchInputRef={searchInputRef}
           selectedCapture={selectedCapture}
           selectedDaySummary={selectedDaySummary}
           storageStats={storageStats}
-          tagDraft={tagDraft}
           todayCaptureCount={todayCaptureCount}
+          workspaceMode={workspaceMode}
         />
 
         <TimelineStrip
@@ -3971,8 +4737,14 @@ function App() {
           isPageLoading={isPageLoading}
           loadedEndOffset={loadedEndOffset}
           loadedStartOffset={loadedStartOffset}
+          onCaptureNow={() => void triggerCaptureNow()}
+          onClearSearch={() => {
+            setCaptureSearchQuery("");
+            setActionMessage("Cleared search query.");
+          }}
           onLoadNewer={() => void loadNewerPage()}
           onLoadOlder={() => void loadOlderPage()}
+          onOpenSettings={() => setIsSettingsOpen(true)}
           onSelectCapture={setSelectedCaptureId}
           onSelectCaptureAtIndex={(index) => {
             const capture = filteredCaptures[index];
@@ -4057,6 +4829,29 @@ function App() {
           themeOptions={THEME_OPTIONS.filter((option) => option.id !== LEGACY_THEME_ID)}
           onSelectTheme={setOnboardingThemeId}
           onConfirm={() => void completeThemeOnboarding()}
+        />
+      ) : null}
+
+      {!isThemeOnboardingOpen && isQuickStartOpen ? (
+        <QuickStartModal
+          intervalMinutes={intervalMinutes}
+          onCaptureNow={() => {
+            dismissQuickStart();
+            void triggerCaptureNow();
+          }}
+          onClose={() => dismissQuickStart()}
+          onOpenSettings={() => dismissQuickStart({ openSettings: true })}
+          onOpenShortcuts={() => dismissQuickStart({ openShortcuts: true })}
+        />
+      ) : null}
+
+      {!isThemeOnboardingOpen && !isQuickStartOpen && isShortcutGuideOpen ? (
+        <KeyboardShortcutsModal
+          onClose={() => setIsShortcutGuideOpen(false)}
+          onOpenSettings={() => {
+            setIsShortcutGuideOpen(false);
+            setIsSettingsOpen(true);
+          }}
         />
       ) : null}
     </div>
