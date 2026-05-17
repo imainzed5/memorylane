@@ -2,6 +2,21 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObjec
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Clock3,
+  Database,
+  HardDrive,
+  Minus,
+  PanelTop,
+  Palette,
+  Square,
+  Settings,
+  Shield,
+  ShieldCheck,
+  X,
+} from "lucide-react";
 import "@fontsource/geist-sans/400.css";
 import "@fontsource/geist-sans/500.css";
 import "@fontsource/geist-sans/600.css";
@@ -218,6 +233,8 @@ type TopBarProps = {
   onSelectDay: (dayKey: string) => void;
   onSelectNextDay: () => void;
   onSelectPreviousDay: () => void;
+  onCloseWindow: () => void;
+  onMinimizeWindow: () => void;
   onToggleWindowMaximize: () => void;
 };
 
@@ -403,6 +420,18 @@ type KeyboardShortcutsModalProps = {
   onOpenSettings: () => void;
 };
 
+type ConfirmationModalTone = "danger" | "neutral";
+
+type ConfirmationModalProps = {
+  body: ReactNode;
+  confirmLabel: string;
+  isConfirmDisabled?: boolean;
+  title: string;
+  tone?: ConfirmationModalTone;
+  onClose: () => void;
+  onConfirm: () => void;
+};
+
 type TimelineStripProps = {
   captures: CaptureRecord[];
   hasNewerPages: boolean;
@@ -445,6 +474,8 @@ const SEARCH_SUGGESTIONS = [
   "tag:roadmap",
   "bookmarked favorite",
 ];
+const ICON_SIZE = 18;
+const ICON_STROKE_WIDTH = 1.8;
 
 const MATCH_SOURCE_LABELS: Record<string, string> = {
   note: "note",
@@ -856,20 +887,28 @@ function TopBar({
   onSelectDay,
   onSelectNextDay,
   onSelectPreviousDay,
+  onCloseWindow,
+  onMinimizeWindow,
   onToggleWindowMaximize,
 }: TopBarProps) {
   return (
-    <header className={isWindowMaximized ? "panel topbar is-maximized" : "panel topbar"}>
-      <div className="topbar-brand" data-tauri-drag-region onDoubleClick={onToggleWindowMaximize}>
-        <img src="/memorylane_logo.jpg" alt="" aria-hidden="true" />
-        <strong>MemoryLane</strong>
-        <span className={isRecording ? "status-pill recording" : "status-pill paused"}>
-          {isRecording ? "recording" : "paused"}
-        </span>
+    <header
+      className={isWindowMaximized ? "panel topbar is-maximized" : "panel topbar"}
+      data-tauri-drag-region
+      onDoubleClick={onToggleWindowMaximize}
+    >
+      <div className="topbar-leading">
+        <div className="topbar-brand">
+          <img src="/memorylane_logo.jpg" alt="" aria-hidden="true" />
+          <strong>MemoryLane</strong>
+          <span className={isRecording ? "status-pill recording" : "status-pill paused"}>
+            {isRecording ? "recording" : "paused"}
+          </span>
+        </div>
       </div>
 
       <div className="topbar-focus">
-        <p className="topbar-focus-label" data-tauri-drag-region>
+        <p className="topbar-focus-label">
           Selected day
         </p>
         <div className="topbar-day-row">
@@ -880,10 +919,15 @@ function TopBar({
             disabled={!hasPreviousDay}
             aria-label="Previous day"
           >
-            ←
+            <ChevronLeft
+              className="lucide-icon"
+              size={ICON_SIZE}
+              strokeWidth={ICON_STROKE_WIDTH}
+              aria-hidden="true"
+            />
           </button>
 
-          <div className="topbar-day-summary-hitbox" data-tauri-drag-region onDoubleClick={onToggleWindowMaximize}>
+          <div className="topbar-day-summary-hitbox">
             <div className="topbar-day-summary">
               <h1>{selectedDayLabel}</h1>
               <p>{selectedDayCaptureCount} captures</p>
@@ -897,11 +941,16 @@ function TopBar({
             disabled={!hasNextDay}
             aria-label="Next day"
           >
-            →
+            <ChevronRight
+              className="lucide-icon"
+              size={ICON_SIZE}
+              strokeWidth={ICON_STROKE_WIDTH}
+              aria-hidden="true"
+            />
           </button>
         </div>
 
-        <p className="topbar-subhint" data-tauri-drag-region>
+        <p className="topbar-subhint">
           Day: ↑/↓ or [ / ] · Capture: ←/→ or J / K · Workspace: R / I / V
         </p>
       </div>
@@ -932,17 +981,20 @@ function TopBar({
         </button>
 
         <button className="secondary icon-button" type="button" title="Settings" aria-label="Open settings" onClick={onOpenSettings}>
-          <svg className="settings-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path
-              d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.05A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.05A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.05A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.05A1.7 1.7 0 0 0 19.4 15Z"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-            <circle cx="12" cy="12" r="3.2" stroke="currentColor" strokeWidth="1.8" />
-          </svg>
+          <Settings
+            className="settings-icon lucide-icon"
+            size={ICON_SIZE}
+            strokeWidth={ICON_STROKE_WIDTH}
+            aria-hidden="true"
+          />
         </button>
+
+        <WindowControls
+          isWindowMaximized={isWindowMaximized}
+          onCloseWindow={onCloseWindow}
+          onMinimizeWindow={onMinimizeWindow}
+          onToggleWindowMaximize={onToggleWindowMaximize}
+        />
       </div>
     </header>
   );
@@ -955,37 +1007,37 @@ function WindowControls({
   onToggleWindowMaximize,
 }: WindowControlsProps) {
   return (
-    <div
-      className={isWindowMaximized ? "window-controls-rail is-maximized" : "window-controls-rail"}
-      role="toolbar"
-      aria-label="Window controls"
-    >
+    <div className={isWindowMaximized ? "window-controls-rail is-maximized" : "window-controls-rail"} role="toolbar" aria-label="Window controls">
       <button
-        className="secondary topbar-window-btn"
+        className="secondary icon-button topbar-window-btn"
         type="button"
         title="Minimize"
         aria-label="Minimize window"
         onClick={onMinimizeWindow}
       >
-        <span aria-hidden="true">_</span>
+        <Minus className="lucide-icon" size={14} strokeWidth={1.9} aria-hidden="true" />
       </button>
       <button
-        className="secondary topbar-window-btn"
+        className="secondary icon-button topbar-window-btn"
         type="button"
         title={isWindowMaximized ? "Restore" : "Maximize"}
         aria-label={isWindowMaximized ? "Restore window" : "Maximize window"}
         onClick={onToggleWindowMaximize}
       >
-        <span aria-hidden="true">{isWindowMaximized ? "❐" : "□"}</span>
+        {isWindowMaximized ? (
+          <PanelTop className="lucide-icon" size={13} strokeWidth={1.8} aria-hidden="true" />
+        ) : (
+          <Square className="lucide-icon" size={13} strokeWidth={1.8} aria-hidden="true" />
+        )}
       </button>
       <button
-        className="secondary topbar-window-btn topbar-window-close"
+        className="secondary icon-button topbar-window-btn topbar-window-close"
         type="button"
         title="Close"
         aria-label="Close window"
         onClick={onCloseWindow}
       >
-        <span aria-hidden="true">×</span>
+        <X className="lucide-icon" size={14} strokeWidth={1.9} aria-hidden="true" />
       </button>
     </div>
   );
@@ -1086,7 +1138,12 @@ function ViewerPane({
               disabled={selectedCaptureIndex <= 0}
               aria-label="Previous capture"
             >
-              &lt;
+              <ChevronLeft
+                className="viewer-step-icon lucide-icon"
+                size={ICON_SIZE}
+                strokeWidth={ICON_STROKE_WIDTH}
+                aria-hidden="true"
+              />
             </button>
 
             {hasCompareAnchor ? (
@@ -1142,7 +1199,12 @@ function ViewerPane({
               disabled={selectedCaptureIndex >= captures.length - 1}
               aria-label="Next capture"
             >
-              &gt;
+              <ChevronRight
+                className="viewer-step-icon lucide-icon"
+                size={ICON_SIZE}
+                strokeWidth={ICON_STROKE_WIDTH}
+                aria-hidden="true"
+              />
             </button>
 
             <div className="capture-overlay">
@@ -2038,18 +2100,12 @@ function SettingsModal({
         <section className="settings-section" ref={appearanceSectionRef}>
           <div className="settings-section-head">
             <h4 className="settings-section-title">
-              <svg className="settings-section-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-                <path
-                  d="M6.9 3.7c1.8-.7 4-.3 5.5 1.2 2.2 2.2 2.2 5.8 0 8a4.9 4.9 0 0 1-3.6 1.5H6.7a2.4 2.4 0 0 1-2.3-2.9l.3-1.2a2 2 0 0 0-.5-1.9l-.4-.4A2.5 2.5 0 0 1 6.9 3.7Z"
-                  stroke="currentColor"
-                  strokeWidth="1.4"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-                <circle cx="9.6" cy="7.2" r="0.85" fill="currentColor" />
-                <circle cx="11.9" cy="8.6" r="0.85" fill="currentColor" />
-                <circle cx="8.1" cy="9.3" r="0.85" fill="currentColor" />
-              </svg>
+              <Palette
+                className="settings-section-icon lucide-icon"
+                size={ICON_SIZE}
+                strokeWidth={ICON_STROKE_WIDTH}
+                aria-hidden="true"
+              />
               Appearance
             </h4>
             <span className="theme-pill">{activeThemeOption?.name ?? "Theme"}</span>
@@ -2082,16 +2138,12 @@ function SettingsModal({
         <section className="settings-section" ref={privacySectionRef}>
           <div className="settings-section-head">
             <h4 className="settings-section-title">
-              <svg className="settings-section-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-                <path
-                  d="M10 3.4 4.6 5.6v3.2c0 3.5 2.3 6.7 5.4 7.8 3.1-1.1 5.4-4.3 5.4-7.8V5.6L10 3.4Z"
-                  stroke="currentColor"
-                  strokeWidth="1.4"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-                <path d="m7.7 9.7 1.7 1.7 2.9-2.9" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
+              <Shield
+                className="settings-section-icon lucide-icon"
+                size={ICON_SIZE}
+                strokeWidth={ICON_STROKE_WIDTH}
+                aria-hidden="true"
+              />
               Trust and privacy
             </h4>
           </div>
@@ -2178,10 +2230,12 @@ function SettingsModal({
         <section className="settings-section" ref={cadenceSectionRef}>
           <div className="settings-section-head">
             <h4 className="settings-section-title">
-              <svg className="settings-section-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-                <circle cx="10" cy="10" r="6.2" stroke="currentColor" strokeWidth="1.4" />
-                <path d="M10 6.6v3.8l2.7 1.6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
+              <Clock3
+                className="settings-section-icon lucide-icon"
+                size={ICON_SIZE}
+                strokeWidth={ICON_STROKE_WIDTH}
+                aria-hidden="true"
+              />
               Capture cadence
             </h4>
             <span className="section-meta">{draftIntervalMinutes} min</span>
@@ -2241,11 +2295,12 @@ function SettingsModal({
         <section className="settings-section" ref={storageSectionRef}>
           <div className="settings-section-head">
             <h4 className="settings-section-title">
-              <svg className="settings-section-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-                <ellipse cx="10" cy="5.3" rx="5.4" ry="2.3" stroke="currentColor" strokeWidth="1.4" />
-                <path d="M4.6 5.3v7.1c0 1.3 2.4 2.3 5.4 2.3s5.4-1 5.4-2.3V5.3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-                <path d="M15.4 8.9c0 1.3-2.4 2.3-5.4 2.3s-5.4-1-5.4-2.3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
+              <Database
+                className="settings-section-icon lucide-icon"
+                size={ICON_SIZE}
+                strokeWidth={ICON_STROKE_WIDTH}
+                aria-hidden="true"
+              />
               Storage policy
             </h4>
           </div>
@@ -2284,11 +2339,12 @@ function SettingsModal({
         <section className="settings-section">
           <div className="settings-section-head">
             <h4 className="settings-section-title">
-              <svg className="settings-section-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-                <ellipse cx="10" cy="5.3" rx="5.4" ry="2.3" stroke="currentColor" strokeWidth="1.4" />
-                <path d="M4.6 5.3v7.1c0 1.3 2.4 2.3 5.4 2.3s5.4-1 5.4-2.3V5.3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-                <path d="M15.4 8.9c0 1.3-2.4 2.3-5.4 2.3s-5.4-1-5.4-2.3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
+              <HardDrive
+                className="settings-section-icon lucide-icon"
+                size={ICON_SIZE}
+                strokeWidth={ICON_STROKE_WIDTH}
+                aria-hidden="true"
+              />
               Storage overview
             </h4>
             <span className="section-meta">{formatStorageValue(storageStats.usedGb)} used</span>
@@ -2317,16 +2373,12 @@ function SettingsModal({
         <section className="settings-section" ref={backupSectionRef}>
           <div className="settings-section-head">
             <h4 className="settings-section-title">
-              <svg className="settings-section-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-                <path
-                  d="M10 3.4 4.6 5.6v3.2c0 3.5 2.3 6.7 5.4 7.8 3.1-1.1 5.4-4.3 5.4-7.8V5.6L10 3.4Z"
-                  stroke="currentColor"
-                  strokeWidth="1.4"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-                <path d="m7.7 9.7 1.7 1.7 2.9-2.9" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
+              <ShieldCheck
+                className="settings-section-icon lucide-icon"
+                size={ICON_SIZE}
+                strokeWidth={ICON_STROKE_WIDTH}
+                aria-hidden="true"
+              />
               Encrypted backup
             </h4>
           </div>
@@ -2662,6 +2714,53 @@ function KeyboardShortcutsModal({ onClose, onOpenSettings }: KeyboardShortcutsMo
   );
 }
 
+function ConfirmationModal({
+  body,
+  confirmLabel,
+  isConfirmDisabled = false,
+  title,
+  tone = "danger",
+  onClose,
+  onConfirm,
+}: ConfirmationModalProps) {
+  return (
+    <div className="settings-overlay" role="presentation" onClick={onClose}>
+      <section
+        className="panel settings-modal confirmation-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="confirmation-modal-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="settings-modal-head">
+          <div>
+            <p className="section-title">Confirm action</p>
+            <h3 id="confirmation-modal-title">{title}</h3>
+          </div>
+        </div>
+
+        <section className="settings-section confirmation-modal-body">
+          <div className="field-help">{body}</div>
+        </section>
+
+        <div className="quickstart-actions confirmation-modal-actions">
+          <button className="secondary" type="button" onClick={onClose}>
+            cancel
+          </button>
+          <button
+            className={tone === "danger" ? "danger" : "secondary"}
+            type="button"
+            onClick={onConfirm}
+            disabled={isConfirmDisabled}
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function TimelineStrip({
   captures,
   hasNewerPages,
@@ -2902,6 +3001,9 @@ function App() {
   const [compareImageDataUrl, setCompareImageDataUrl] = useState<string | null>(null);
   const [noteSaveState, setNoteSaveState] = useState<NoteSaveState>("idle");
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
+  const [pendingRedactionCaptureId, setPendingRedactionCaptureId] = useState<number | null>(null);
+  const [pendingDeleteCaptureId, setPendingDeleteCaptureId] = useState<number | null>(null);
+  const [pendingDeleteDayKey, setPendingDeleteDayKey] = useState<string | null>(null);
   const [isWindowMaximized, setIsWindowMaximized] = useState<boolean>(false);
   const [actionMessage, setActionMessage] = useState<string>("Loading MemoryLane services...");
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -3835,14 +3937,16 @@ function App() {
       return;
     }
 
-    const shouldRedact = window.confirm(
-      "Redact this capture image and metadata? This will overwrite the screenshot preview with a redacted version.",
-    );
+    setPendingRedactionCaptureId(selectedCapture.id);
+  }, [selectedCapture]);
 
-    if (!shouldRedact) {
+  const confirmRedactSelectedCapture = useCallback(async () => {
+    if (!selectedCapture || pendingRedactionCaptureId !== selectedCapture.id) {
+      setPendingRedactionCaptureId(null);
       return;
     }
 
+    setPendingRedactionCaptureId(null);
     setIsReviewBusy(true);
     try {
       await invoke("redact_capture", {
@@ -3859,7 +3963,7 @@ function App() {
     } finally {
       setIsReviewBusy(false);
     }
-  }, [refreshAll, selectedCapture]);
+  }, [pendingRedactionCaptureId, refreshAll, selectedCapture]);
 
   const jumpThroughRetrievalResults = useCallback(
     async (step: number) => {
@@ -4250,14 +4354,16 @@ function App() {
       return;
     }
 
-    const shouldDelete = window.confirm(
-      `Delete this screenshot from ${selectedCapture.timestampLabel}? This removes the image and thumbnail files.`,
-    );
+    setPendingDeleteCaptureId(selectedCapture.id);
+  }, [selectedCapture]);
 
-    if (!shouldDelete) {
+  const confirmDeleteSelectedCapture = useCallback(async () => {
+    if (!selectedCapture || pendingDeleteCaptureId !== selectedCapture.id) {
+      setPendingDeleteCaptureId(null);
       return;
     }
 
+    setPendingDeleteCaptureId(null);
     try {
       const payload = await invoke<DeleteCapturePayload>("delete_capture", {
         captureId: selectedCapture.id,
@@ -4270,7 +4376,7 @@ function App() {
     } catch {
       setActionMessage("Delete capture action failed.");
     }
-  }, [clearCompareAnchor, compareCaptureRef?.captureId, refreshAll, selectedCapture]);
+  }, [clearCompareAnchor, compareCaptureRef?.captureId, pendingDeleteCaptureId, refreshAll, selectedCapture]);
 
   const deleteSelectedDay = useCallback(async () => {
     if (selectedDaySummary.captureCount === 0) {
@@ -4278,14 +4384,16 @@ function App() {
       return;
     }
 
-    const shouldDelete = window.confirm(
-      `Delete every screenshot from ${formatViewerDate(selectedDaySummary.dayKey)}? This cannot be undone.`,
-    );
+    setPendingDeleteDayKey(selectedDaySummary.dayKey);
+  }, [selectedDaySummary.captureCount, selectedDaySummary.dayKey]);
 
-    if (!shouldDelete) {
+  const confirmDeleteSelectedDay = useCallback(async () => {
+    if (selectedDaySummary.captureCount === 0 || pendingDeleteDayKey !== selectedDaySummary.dayKey) {
+      setPendingDeleteDayKey(null);
       return;
     }
 
+    setPendingDeleteDayKey(null);
     try {
       const payload = await invoke<DeleteDayPayload>("delete_day", {
         dayKey: selectedDaySummary.dayKey,
@@ -4300,7 +4408,7 @@ function App() {
     } catch {
       setActionMessage("Delete day action failed.");
     }
-  }, [clearCompareAnchor, compareCaptureRef?.dayKey, refreshAll, selectedDaySummary, todayKey]);
+  }, [clearCompareAnchor, compareCaptureRef?.dayKey, pendingDeleteDayKey, refreshAll, selectedDaySummary, todayKey]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -4313,6 +4421,16 @@ function App() {
       }
 
       if (isThemeOnboardingOpen) {
+        return;
+      }
+
+      if (pendingRedactionCaptureId !== null || pendingDeleteCaptureId !== null || pendingDeleteDayKey !== null) {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          setPendingRedactionCaptureId(null);
+          setPendingDeleteCaptureId(null);
+          setPendingDeleteDayKey(null);
+        }
         return;
       }
 
@@ -4516,6 +4634,9 @@ function App() {
     isShortcutGuideOpen,
     isThemeOnboardingOpen,
     isSettingsOpen,
+    pendingDeleteCaptureId,
+    pendingDeleteDayKey,
+    pendingRedactionCaptureId,
     retrievalResults.length,
     toggleBookmark,
     toggleFullscreen,
@@ -4530,6 +4651,8 @@ function App() {
   const selectedDayLabel = formatViewerDate(selectedDaySummary.dayKey);
   const contextBadge = deriveContextBadge(selectedCapture);
   const noteDirty = selectedCapture ? noteDraft !== selectedCapture.captureNote : false;
+  const pendingDeleteDayLabel =
+    pendingDeleteDayKey !== null ? formatViewerDate(pendingDeleteDayKey) : formatViewerDate(selectedDaySummary.dayKey);
   const compareCaptureLabel =
     compareCaptureRef && compareCaptureRef.captureId !== selectedCapture?.id
       ? `${formatViewerDate(compareCaptureRef.dayKey)} · ${compareCaptureRef.timestampLabel}`
@@ -4579,19 +4702,6 @@ function App() {
 
   return (
     <div className="memorylane-root" data-theme={appliedThemeId}>
-      <div className="desktop-titleband">
-        <div className="desktop-titleband-drag" data-tauri-drag-region onDoubleClick={handleWindowToggleMaximize}>
-          <span className="desktop-window-title">MemoryLane</span>
-        </div>
-
-        <WindowControls
-          isWindowMaximized={isWindowMaximized}
-          onCloseWindow={handleWindowClose}
-          onMinimizeWindow={handleWindowMinimize}
-          onToggleWindowMaximize={handleWindowToggleMaximize}
-        />
-      </div>
-
       <div className="app-shell">
         <TopBar
           hasNextDay={hasNextDay}
@@ -4609,6 +4719,8 @@ function App() {
           onSelectDay={setSelectedDayKey}
           onSelectNextDay={() => shiftDay(-1)}
           onSelectPreviousDay={() => shiftDay(1)}
+          onCloseWindow={handleWindowClose}
+          onMinimizeWindow={handleWindowMinimize}
           onToggleWindowMaximize={handleWindowToggleMaximize}
         />
 
@@ -4854,9 +4966,61 @@ function App() {
           }}
         />
       ) : null}
+
+      {pendingRedactionCaptureId !== null && selectedCapture && pendingRedactionCaptureId === selectedCapture.id ? (
+        <ConfirmationModal
+          title="Redact selected capture?"
+          confirmLabel={isReviewBusy ? "redacting..." : "redact capture"}
+          isConfirmDisabled={isReviewBusy}
+          onClose={() => setPendingRedactionCaptureId(null)}
+          onConfirm={() => void confirmRedactSelectedCapture()}
+          body={
+            <>
+              <p>
+                Redact <strong>{selectedCapture.timestampLabel}</strong> and overwrite the screenshot preview with a
+                redacted version.
+              </p>
+              <p>This also updates the capture metadata while keeping the timeline entry in place.</p>
+            </>
+          }
+        />
+      ) : null}
+
+      {pendingDeleteCaptureId !== null && selectedCapture && pendingDeleteCaptureId === selectedCapture.id ? (
+        <ConfirmationModal
+          title="Delete selected capture?"
+          confirmLabel="delete capture"
+          onClose={() => setPendingDeleteCaptureId(null)}
+          onConfirm={() => void confirmDeleteSelectedCapture()}
+          body={
+            <>
+              <p>
+                Delete the screenshot from <strong>{selectedCapture.timestampLabel}</strong>.
+              </p>
+              <p>This removes the image and thumbnail files for this capture.</p>
+            </>
+          }
+        />
+      ) : null}
+
+      {pendingDeleteDayKey !== null ? (
+        <ConfirmationModal
+          title="Delete selected day?"
+          confirmLabel="delete day"
+          onClose={() => setPendingDeleteDayKey(null)}
+          onConfirm={() => void confirmDeleteSelectedDay()}
+          body={
+            <>
+              <p>
+                Delete every screenshot from <strong>{pendingDeleteDayLabel}</strong>.
+              </p>
+              <p>This will remove all captures for that day and cannot be undone.</p>
+            </>
+          }
+        />
+      ) : null}
     </div>
   );
 }
 
 export default App;
-

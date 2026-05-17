@@ -4998,15 +4998,8 @@ pub fn run() {
             if let Some(window) = app_handle.get_webview_window("main") {
                 let allow_exit = state.allow_exit.clone();
                 let window_handle = window.clone();
-                let close_app_handle = app_handle.clone();
                 window.on_window_event(move |event| {
                     if let WindowEvent::CloseRequested { api, .. } = event {
-                        if cfg!(debug_assertions) {
-                            api.prevent_close();
-                            close_app_handle.exit(0);
-                            return;
-                        }
-
                         if !allow_exit.load(Ordering::Relaxed) {
                             api.prevent_close();
                             let _ = window_handle.hide();
