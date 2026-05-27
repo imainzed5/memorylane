@@ -1,7 +1,7 @@
 {
   "name": "memorylane-desktop",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "MemoryLane local-first screenshot journal for Windows",
   "author": "MemoryLane Contributors",
   "license": "MIT",
@@ -12,7 +12,7 @@
     "check:rust": "cargo check --manifest-path src-tauri/Cargo.toml",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
     "verify": "npm run build && npm run check:rust && npm run test:rust",
-    "build:desktop": "npm run tauri -- build",
+    "build:desktop": "npm.cmd run tauri -- build",
     "preview": "vite preview",
     "tauri": "node ./scripts/tauri-dev.mjs"
   },

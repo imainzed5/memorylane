@@ -1,6 +1,6 @@
 [package]
 name = "memorylane"
-version = "0.1.0"
+version = "1.0.0"
 description = "MemoryLane local-first screenshot journal for Windows"
 authors = ["MemoryLane Contributors"]
 license = "MIT"
@@ -41,4 +41,3 @@ windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_
 
 [dev-dependencies]
 tempfile = "3"
-
