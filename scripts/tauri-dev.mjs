@@ -4,10 +4,9 @@ import path from "node:path";
 
 const forwardedArgs = process.argv.slice(2);
 const cargoTargetBaseDir = process.env.CARGO_TARGET_DIR ?? path.join(process.env.LOCALAPPDATA ?? "", "memorylane", "cargo-target");
-const isDevCommand = forwardedArgs[0] === "dev";
-const cargoTargetDir = isDevCommand
-  ? path.join(cargoTargetBaseDir, `dev-${Date.now()}-${process.pid}`)
-  : cargoTargetBaseDir;
+// Reuse one target directory so Cargo can reuse compiled dependencies between
+// development runs. The stale-process cleanup below handles Windows file locks.
+const cargoTargetDir = cargoTargetBaseDir;
 const memorylaneExePath = path.join(cargoTargetDir, "debug", "memorylane.exe");
 
 process.env.CARGO_TARGET_DIR = cargoTargetDir;

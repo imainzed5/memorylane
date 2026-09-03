@@ -34,7 +34,7 @@ MemoryLane is a Windows-only, local-first screenshot journal for desktop work. I
 
 The desktop bundle is written to `%LOCALAPPDATA%\\memorylane\\cargo-target\\release\\bundle`.
 The landing page is available separately at `public/landing.html`; the packaged exe opens the app shell from `index.html`.
-The `npm run tauri dev` wrapper clears any stale `memorylane.exe` instance and uses a fresh dev target directory on each run, which avoids the Windows file-lock error from a previous session.
+The `npm run tauri dev` wrapper clears any stale `memorylane.exe` instance and reuses the stable `%LOCALAPPDATA%\\memorylane\\cargo-target` directory, allowing Cargo to reuse compiled dependencies between runs while avoiding Windows file-lock errors.
 In debug builds, closing the window now exits the app instead of leaving the tray process alive, so Cargo can rebuild the exe on the next run.
 For the optional OCR installer component in NSIS builds, place `tesseract-installer.exe` in `src-tauri/resources/tesseract/` before packaging.
 
