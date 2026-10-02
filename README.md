@@ -1,62 +1,74 @@
 # MemoryLane
 
 <p align="center">
-	<img src="memorylane_logo.jpg" alt="MemoryLane logo" width="720" />
+  <img src="memorylane_logo.jpg" alt="MemoryLane logo" width="560" />
 </p>
 
-MemoryLane is a Windows-only, local-first screenshot journal for desktop work. It runs in the tray, captures screenshots on a schedule, and gives you a fast timeline for reviewing each day.
+> **Ever wonder where your day went?**
 
-## What It Includes
+MemoryLane helps you look back. It takes screenshots of your desktop on a schedule you choose and arranges them into a visual timeline. When the day gets busy and the details blur together, browse your captures to remember what you were working on.
 
-- Tray-based background capture
-- Day navigator with capture counts and density bars
-- Selected-capture viewer with thumbnail timeline scrubbing
-- Metadata-first loading, with full-size images fetched on demand
-- Settings for capture interval, retention, storage cap, and startup on boot
-- Keyboard shortcuts for browsing, capture control, and folder access
-- SQLite-backed local storage
+## Take a look back
 
-## Requirements
+- Browse captures by day.
+- Skim a thumbnail timeline and open the moments you want to see.
+- Pause scheduled captures or take one immediately.
+- Choose how often to capture, how long to keep captures, and how much storage to use.
+- Keep MemoryLane handy from the system tray.
 
-- Windows 10 or Windows 11
-- Node.js and npm
-- Rust toolchain and Tauri prerequisites
+## Your captures stay local
 
-## Run
+MemoryLane saves captures in its local app data folder. It doesn’t put them in a shared sync folder.
 
-1. Install dependencies: `npm install`
-2. Start the desktop app: `npm run tauri dev`
-3. Build the frontend: `npm run build`
-4. Check Rust: `npm run check:rust`
-5. Run Rust tests: `npm run test:rust`
-6. Run all local checks: `npm run verify`
-7. Build the Windows installer: `npm run build:desktop`
+## Getting started
 
-The desktop bundle is written to `%LOCALAPPDATA%\\memorylane\\cargo-target\\release\\bundle`.
-The landing page is available separately at `public/landing.html`; the packaged exe opens the app shell from `index.html`.
-The `npm run tauri dev` wrapper clears any stale `memorylane.exe` instance and reuses the stable `%LOCALAPPDATA%\\memorylane\\cargo-target` directory, allowing Cargo to reuse compiled dependencies between runs while avoiding Windows file-lock errors.
-In debug builds, closing the window now exits the app instead of leaving the tray process alive, so Cargo can rebuild the exe on the next run.
-For the optional OCR installer component in NSIS builds, place `tesseract-installer.exe` in `src-tauri/resources/tesseract/` before packaging.
+MemoryLane currently runs on Windows 10 and Windows 11.
 
-## Keyboard Shortcuts
+To run it from source, you’ll need Node.js, npm, Rust, and the Tauri prerequisites for Windows.
 
-- `Left` / `Right`: previous or next capture in the selected day.
-- `Up` / `Down`: previous or next day in the sidebar.
-- `Home` / `End`: jump to the first or latest capture in the selected day.
-- `Space`: toggle pause and resume.
-- `C`: capture now.
-- `O`: open the captures folder.
-- `T`: jump to today.
-- `,` / `.`: load earlier or later timeline pages.
-- `Delete`: delete the selected capture.
-- `Escape`: close the settings modal.
+1. Install dependencies:
 
-## Notes
+   ```powershell
+   npm install
+   ```
 
-- Captures live under the app data directory, not in a shared sync folder.
-- The packaging target is Windows-only for now.
+2. Start the app:
+
+   ```powershell
+   npm run tauri -- dev
+   ```
+
+## Keyboard shortcuts
+
+| Key | Action |
+| --- | --- |
+| `Left` / `Right` | View the previous or next capture |
+| `Up` / `Down` | Choose the previous or next day |
+| `Home` / `End` | Jump to the first or latest capture of the day |
+| `Space` | Pause or resume captures |
+| `C` | Capture now |
+| `O` | Open the captures folder |
+| `T` | Jump to today |
+| `,` / `.` | Load an earlier or later part of the timeline |
+| `Delete` | Delete the selected capture |
+| `Escape` | Close Settings |
+
+## Build from source
+
+These commands are for development and packaging:
+
+| Command | What it does |
+| --- | --- |
+| `npm run build` | Build the app’s frontend |
+| `npm run check:rust` | Check the Rust code |
+| `npm run test:rust` | Run Rust tests |
+| `npm run verify` | Build the frontend, check Rust, and run Rust tests |
+| `npm run build:desktop` | Build the Windows desktop installer |
+
+The desktop build is written to `%LOCALAPPDATA%\\memorylane\\cargo-target\\release\\bundle`.
+
+For the optional OCR installer in NSIS packages, place `tesseract-installer.exe` in `src-tauri/resources/tesseract/` before packaging.
 
 ## License
 
 MIT
-- On startup, the app auto-migrates legacy data from a previous app-data identity when that legacy database contains more captures, so timeline history remains intact.
