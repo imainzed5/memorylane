@@ -17,7 +17,6 @@ use pbkdf2::pbkdf2_hmac;
 use rand::rngs::OsRng;
 use rand::RngCore;
 use rusqlite::{params, Connection};
-use screenshots::Screen;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
@@ -2670,15 +2669,26 @@ fn capture_once(state: &SharedState) -> Result<CaptureRunResult, String> {
         .map(|payload| payload.mode == "redact")
         .unwrap_or(false);
 
-    let screen = Screen::all()
-        .map_err(|error| format!("failed to list displays: {error}"))?
-        .into_iter()
-        .next()
-        .ok_or_else(|| "no display available for capture".to_string())?;
+    if capture::is_secure_desktop_active() {
+        clear_capture_error_state(state);
+        return Ok(CaptureRunResult::Suppressed(CaptureSuppressedEventPayload {
+            mode: "skip".to_string(),
+            reason: "Screen is locked".to_string(),
+            captured: false,
+        }));
+    }
 
-    let screenshot = screen
-        .capture()
-        .map_err(|error| format!("failed to capture primary display: {error}"))?;
+    let screenshot = match capture::capture_primary_display()? {
+        capture::CaptureOutcome::Frame(frame) => frame,
+        capture::CaptureOutcome::Blank => {
+            clear_capture_error_state(state);
+            return Ok(CaptureRunResult::Suppressed(CaptureSuppressedEventPayload {
+                mode: "skip".to_string(),
+                reason: "Screen was blank".to_string(),
+                captured: false,
+            }));
+        }
+    };
 
     let now = Local::now();
     let day_key = now.format("%Y-%m-%d").to_string();
@@ -5173,6 +5183,8 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+mod capture;
 
 #[cfg(test)]
 mod tests;
