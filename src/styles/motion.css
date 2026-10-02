@@ -1,0 +1,183 @@
+/* ==========================================================================
+   Motion: keyframes, View Transitions, reduced-motion handling
+   Durations and curves come from the tokens in theme.css.
+   ========================================================================== */
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@keyframes image-in {
+  from {
+    opacity: 0.35;
+    transform: scale(0.992);
+  }
+}
+
+@keyframes popover-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(-4px);
+  }
+}
+
+@keyframes sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.97);
+  }
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-10px) scale(0.94);
+  }
+}
+
+@keyframes toast-out {
+  to {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-6px) scale(0.97);
+  }
+}
+
+@keyframes toolbar-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(8px);
+  }
+}
+
+@keyframes month-in-next {
+  from {
+    opacity: 0;
+    transform: translateX(28px);
+  }
+}
+
+@keyframes month-in-previous {
+  from {
+    opacity: 0;
+    transform: translateX(-28px);
+  }
+}
+
+@keyframes pulse-ring {
+  0% {
+    opacity: 0.6;
+    transform: scale(1);
+  }
+  70%,
+  100% {
+    opacity: 0;
+    transform: scale(2.6);
+  }
+}
+
+/* Popovers that open upward grow from below instead. */
+.filter-popover,
+.info-popover {
+  animation-name: popover-up-in;
+}
+
+@keyframes popover-up-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(4px);
+  }
+}
+
+/* --- View Transitions ------------------------------------------------------------- */
+
+/* Let clicks reach the live DOM while a transition is still settling. */
+::view-transition {
+  pointer-events: none;
+}
+
+::view-transition-group(root) {
+  animation-duration: var(--dur-base);
+}
+
+/* Workspace switches: the content pane cross-fades with a slight lift. */
+:root[data-transition="workspace"] [data-workspace-pane] {
+  view-transition-name: workspace-pane;
+}
+
+::view-transition-old(workspace-pane) {
+  animation: var(--dur-fast) var(--ease-out) both vt-fade-out;
+}
+
+::view-transition-new(workspace-pane) {
+  animation: var(--dur-slow) var(--ease-spring) both vt-rise-in;
+}
+
+@keyframes vt-fade-out {
+  to {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+}
+
+@keyframes vt-rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.99);
+  }
+}
+
+/* Hero morph: thumbnail -> viewer, viewer -> Quick Look. */
+::view-transition-group(capture-hero) {
+  z-index: 50;
+  animation-duration: var(--dur-slow);
+  animation-timing-function: var(--ease-spring);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+
+::view-transition-old(capture-hero),
+::view-transition-new(capture-hero) {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  animation-duration: var(--dur-base);
+}
+
+/* --- Reduced motion -------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .film-thumb {
+    transform: none !important;
+  }
+
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}

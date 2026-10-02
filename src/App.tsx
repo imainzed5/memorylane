@@ -9,11 +9,23 @@ import "@fontsource/geist-sans/700.css";
 import "@fontsource/geist-mono/500.css";
 import "./App.css";
 import type { DaySummary, CaptureRecord, RetrievalSearchResult, ImportBackupPayload, PerformanceSnapshotPayload, CaptureContextPagePayload, CaptureImagePayload, CaptureHealthPayload, OcrHealthPayload, ReindexCapturesPayload, CaptureErrorEventPayload, SettingsPayload, SensitiveCaptureMode, CaptureReviewPayload, ReviewShortcutCapture, ReviewShortcutsPayload, CaptureSuppressedEventPayload, PauseStatePayload, StorageStatsPayload, DeleteCapturePayload, DeleteDayPayload, NoteSaveState, ThemeId, WorkspaceMode } from "./types";
-import { EMPTY_DENSITY, INTERVAL_MIN_MINUTES, INTERVAL_OPTIONS, TIMELINE_PAGE_LIMIT, TIMELINE_VIRTUAL_WINDOW, TIMELINE_THUMB_WIDTH_PX, LEGACY_THEME_ID, ONBOARDING_THEME_ID, THEME_OPTIONS } from "./constants";
-import { TopBar, DayRail, ViewerPane, ReviewWorkspace, IntelligenceWorkspace, AllCapturesWorkspace, CalendarWorkspace, UtilityRail, SettingsModal, ThemeOnboardingModal, QuickStartModal, KeyboardShortcutsModal, ConfirmationModal, TimelineStrip } from "./components/app";
+import { EMPTY_DENSITY, INSPECTOR_OPEN_STORAGE_KEY, INTERVAL_MIN_MINUTES, INTERVAL_OPTIONS, LIGHT_THEME_IDS, TIMELINE_PAGE_LIMIT, TIMELINE_VIRTUAL_WINDOW, TIMELINE_THUMB_WIDTH_PX, LEGACY_THEME_ID, ONBOARDING_THEME_ID, THEME_OPTIONS } from "./constants";
+import { TopBar } from "./components/TopBar";
+import { Sidebar } from "./components/Sidebar";
+import { Viewer } from "./components/Viewer";
+import { Inspector } from "./components/Inspector";
+import { Filmstrip } from "./components/Filmstrip";
+import { QuickLook } from "./components/QuickLook";
+import { CalendarWorkspace } from "./components/workspaces/CalendarWorkspace";
+import { GalleryWorkspace } from "./components/workspaces/GalleryWorkspace";
+import { IntelligenceWorkspace } from "./components/workspaces/IntelligenceWorkspace";
+import { ReviewWorkspace } from "./components/workspaces/ReviewWorkspace";
+import { SettingsModal } from "./components/modals/SettingsModal";
+import { ConfirmationModal, KeyboardShortcutsModal, QuickStartModal, ThemeOnboardingModal } from "./components/modals/Dialogs";
+import { runViewTransition } from "./utils/motion";
 import { useArchiveSearch } from "./hooks/useArchiveSearch";
 import { useDayIntelligence } from "./hooks/useDayIntelligence";
-import { resolveThemeId, resolveSensitiveCaptureMode, parseListEditorText, listToEditorText, haveSameListValues, parseTagDraftInput, hasDismissedQuickStart, markQuickStartDismissed, themeName, dayKeyFromDate, dayDateFromKey, formatDaySecondary, formatViewerDate, formatCaptureTimestamp, isDayKey, formatCountdown, clampIntervalMinutes, fallbackDays, mergeCaptures, buildHourMarkers, deriveContextBadge } from "./utils/app";
+import { resolveThemeId, resolveSensitiveCaptureMode, parseListEditorText, listToEditorText, haveSameListValues, parseTagDraftInput, hasDismissedQuickStart, markQuickStartDismissed, themeName, dayKeyFromDate, dayDateFromKey, formatDaySecondary, formatViewerDate, formatCaptureTimestamp, isDayKey, formatCountdown, clampIntervalMinutes, fallbackDays, mergeCaptures, deriveContextBadge } from "./utils/app";
 
 function App() {
   const currentWindow = useMemo(() => getCurrentWindow(), []);
@@ -59,6 +71,15 @@ function App() {
   const [isQuickStartOpen, setIsQuickStartOpen] = useState<boolean>(false);
   const [isShortcutGuideOpen, setIsShortcutGuideOpen] = useState<boolean>(false);
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("browse");
+  const workspaceModeRef = useRef<WorkspaceMode>("browse");
+  const [isQuickLookOpen, setIsQuickLookOpen] = useState<boolean>(false);
+  const [isInspectorOpen, setIsInspectorOpen] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem(INSPECTOR_OPEN_STORAGE_KEY) !== "0";
+    } catch {
+      return true;
+    }
+  });
 
   const [storagePath, setStoragePath] = useState<string>("Resolving managed storage path...");
   const [storageStats, setStorageStats] = useState<StorageStatsPayload>({
@@ -132,7 +153,12 @@ function App() {
   const [pendingDeleteCaptureId, setPendingDeleteCaptureId] = useState<number | null>(null);
   const [pendingDeleteDayKey, setPendingDeleteDayKey] = useState<string | null>(null);
   const [isWindowMaximized, setIsWindowMaximized] = useState<boolean>(false);
-  const [actionMessage, setActionMessage] = useState<string>("Loading MemoryLane services...");
+  const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
+  const toastIdRef = useRef(0);
+  const setActionMessage = useCallback((message: string) => {
+    toastIdRef.current += 1;
+    setToast({ id: toastIdRef.current, message });
+  }, []);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [clockMs, setClockMs] = useState<number>(Date.now());
   const [globalTooltip, setGlobalTooltip] = useState<{
@@ -197,6 +223,36 @@ function App() {
   }, [selectedDayKey]);
 
   useEffect(() => {
+    workspaceModeRef.current = workspaceMode;
+  }, [workspaceMode]);
+
+  const switchWorkspace = useCallback((mode: WorkspaceMode) => {
+    if (workspaceModeRef.current === mode) {
+      return;
+    }
+    workspaceModeRef.current = mode;
+    runViewTransition(() => setWorkspaceMode(mode), { kind: "workspace" });
+  }, []);
+
+  useEffect(() => {
+    if (!toast) {
+      return;
+    }
+    const timeoutId = window.setTimeout(() => {
+      setToast((current) => (current?.id === toast.id ? null : current));
+    }, 2800);
+    return () => window.clearTimeout(timeoutId);
+  }, [toast]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(INSPECTOR_OPEN_STORAGE_KEY, isInspectorOpen ? "1" : "0");
+    } catch {
+      // Ignore storage failures; the inspector simply reopens next launch.
+    }
+  }, [isInspectorOpen]);
+
+  useEffect(() => {
     const intervalId = window.setInterval(() => {
       setClockMs(Date.now());
     }, 1000);
@@ -253,6 +309,23 @@ function App() {
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", appliedThemeId);
+  }, [appliedThemeId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const applyMaterial = (material: "mica" | "solid") => {
+      if (!cancelled) {
+        document.documentElement.setAttribute("data-material", material);
+      }
+    };
+
+    invoke<boolean>("set_window_material", { dark: !LIGHT_THEME_IDS.has(appliedThemeId) })
+      .then((enabled) => applyMaterial(enabled ? "mica" : "solid"))
+      .catch(() => applyMaterial("solid"));
+
+    return () => {
+      cancelled = true;
+    };
   }, [appliedThemeId]);
 
   useEffect(() => {
@@ -380,8 +453,6 @@ function App() {
 
     return `Next capture in ${formatCountdown(nextCaptureAt - clockMs)}`;
   }, [clockMs, intervalMinutes, todaySummary?.lastCaptureAt]);
-
-  const hourMarkers = useMemo(() => buildHourMarkers(filteredCaptures), [filteredCaptures]);
 
   const refreshStoragePath = useCallback(async () => {
     const resolvedPath = await invoke<string>("get_storage_path");
@@ -687,9 +758,6 @@ function App() {
 
       try {
         await refreshAll(dayKeyFromDate(new Date()));
-        if (!disposed) {
-          setActionMessage("Dashboard ready. Capture is running in the tray.");
-        }
       } catch {
         if (!disposed) {
           setActionMessage("Backend connection unavailable. Start the app with tauri dev.");
@@ -762,7 +830,7 @@ function App() {
         unlistenCaptureSuppressed();
       }
     };
-  }, [refreshAll, refreshSettingsAndStats]);
+  }, [refreshAll, refreshSettingsAndStats, setActionMessage]);
 
   useEffect(() => {
     if (isLoading) {
@@ -817,86 +885,124 @@ function App() {
   }, []);
 
   const openBrowseWorkspace = useCallback(() => {
-    setWorkspaceMode("browse");
+    switchWorkspace("browse");
   }, []);
 
-  const focusSearchWorkspace = useCallback(() => {
-    setWorkspaceMode("browse");
-    window.requestAnimationFrame(() => searchInputRef.current?.focus());
+  const focusSearch = useCallback(() => {
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
   }, []);
 
   const openReviewWorkspace = useCallback(() => {
-    setWorkspaceMode("review");
+    switchWorkspace("review");
   }, []);
 
   const openIntelligenceWorkspace = useCallback(() => {
-    setWorkspaceMode("intelligence");
+    switchWorkspace("intelligence");
   }, []);
 
   const searchFromIntelligenceTerm = useCallback((term: string) => {
     setCaptureSearchQuery(term);
-    setWorkspaceMode("browse");
+    switchWorkspace("browse");
     setActionMessage(`Filtering captures with "${term}".`);
   }, []);
 
-  const openCaptureContext = useCallback(async (captureId: number) => {
+  const fetchCaptureContext = useCallback(async (captureId: number) => {
     try {
-      const payload = await invoke<CaptureContextPagePayload>("get_capture_context_page", {
+      return await invoke<CaptureContextPagePayload>("get_capture_context_page", {
         captureId,
         pageSize: TIMELINE_PAGE_LIMIT,
       });
-
-      setSelectedDayKey(payload.dayKey);
-      setCaptures(payload.captures);
-      setLoadedStartOffset(payload.offset);
-      setLoadedEndOffset(payload.offset + payload.captures.length);
-      setSelectedCaptureId(payload.focusedCaptureId);
-      return payload;
     } catch {
       return null;
     }
   }, []);
 
+  const applyCaptureContext = useCallback((payload: CaptureContextPagePayload) => {
+    setSelectedDayKey(payload.dayKey);
+    setCaptures(payload.captures);
+    setLoadedStartOffset(payload.offset);
+    setLoadedEndOffset(payload.offset + payload.captures.length);
+    setSelectedCaptureId(payload.focusedCaptureId);
+  }, []);
+
+  const openCaptureContext = useCallback(
+    async (captureId: number) => {
+      const payload = await fetchCaptureContext(captureId);
+      if (payload) {
+        applyCaptureContext(payload);
+      }
+      return payload;
+    },
+    [applyCaptureContext, fetchCaptureContext],
+  );
+
   const jumpToRetrievalResult = useCallback(async (result: RetrievalSearchResult) => {
     const payload = await openCaptureContext(result.captureId);
     if (payload) {
-      setActionMessage(`Jumped to ${formatViewerDate(payload.dayKey)} at ${result.timestampLabel}.`);
+      switchWorkspace("browse");
     } else {
       setActionMessage("Unable to open that search result.");
     }
-  }, [openCaptureContext]);
+  }, [openCaptureContext, setActionMessage, switchWorkspace]);
 
   const jumpToReviewCapture = useCallback(async (captureId: number) => {
     const payload = await openCaptureContext(captureId);
     if (payload) {
-      setActionMessage(`Jumped to saved capture on ${formatViewerDate(payload.dayKey)}.`);
+      switchWorkspace("browse");
     } else {
       setActionMessage("Unable to open saved capture.");
     }
-  }, [openCaptureContext]);
+  }, [openCaptureContext, setActionMessage, switchWorkspace]);
 
-  const jumpToAllCapturesResult = useCallback(async (captureId: number) => {
-    const payload = await openCaptureContext(captureId);
-    if (payload) {
-      setWorkspaceMode("browse");
-      setActionMessage(`Jumped to capture on ${formatViewerDate(payload.dayKey)}.`);
-    } else {
-      setActionMessage("Unable to open capture.");
-    }
-  }, [openCaptureContext]);
+  // Gallery tile -> viewer: the tile's thumbnail morphs into the viewer image.
+  const jumpToGalleryCapture = useCallback(
+    async (captureId: number, source: HTMLElement | null) => {
+      const payload = await fetchCaptureContext(captureId);
+      if (!payload) {
+        setActionMessage("Unable to open capture.");
+        return;
+      }
+
+      workspaceModeRef.current = "browse";
+      runViewTransition(
+        () => {
+          applyCaptureContext(payload);
+          setWorkspaceMode("browse");
+        },
+        { heroSource: source, heroTargetSelector: '[data-hero="viewer"]' },
+      );
+    },
+    [applyCaptureContext, fetchCaptureContext, setActionMessage],
+  );
 
   const jumpToCalendarDay = useCallback((dayKey: string) => {
-    setSelectedDayKey(dayKey);
-    setWorkspaceMode("browse");
-    setActionMessage(`Opened timeline for ${formatViewerDate(dayKey)}.`);
+    workspaceModeRef.current = "browse";
+    runViewTransition(
+      () => {
+        setSelectedDayKey(dayKey);
+        setWorkspaceMode("browse");
+      },
+      { kind: "workspace" },
+    );
   }, []);
 
-  const openAllCapturesWorkspace = useCallback(() => {
-    setWorkspaceMode("all-captures");
+  const openQuickLook = useCallback((source: HTMLElement | null) => {
+    runViewTransition(() => setIsQuickLookOpen(true), {
+      heroSource: source ?? document.querySelector<HTMLElement>('[data-hero="viewer"]'),
+      heroTargetSelector: '[data-hero="quicklook"]',
+    });
+  }, []);
+
+  const closeQuickLook = useCallback((source: HTMLElement | null) => {
+    runViewTransition(() => setIsQuickLookOpen(false), {
+      heroSource: source ?? document.querySelector<HTMLElement>('[data-hero="quicklook"]'),
+      heroTargetSelector: '[data-hero="viewer"]',
+    });
   }, []);
 
   const openCalendarWorkspace = useCallback(() => {
-    setWorkspaceMode("calendar");
+    switchWorkspace("calendar");
   }, []);
 
   const applyTagFilter = useCallback((tag: string) => {
@@ -1071,14 +1177,6 @@ function App() {
     setSelectedCaptureId(filteredCaptures[0].id);
   }, [filteredCaptures]);
 
-  const jumpToLastCapture = useCallback(() => {
-    if (filteredCaptures.length === 0) {
-      return;
-    }
-
-    setSelectedCaptureId(filteredCaptures[filteredCaptures.length - 1].id);
-  }, [filteredCaptures]);
-
   const shiftDay = useCallback(
     (step: number) => {
       if (navigationDays.length === 0) {
@@ -1169,9 +1267,7 @@ function App() {
       setSensitiveWindowKeywords(updated.sensitiveWindowKeywords ?? []);
       setSensitiveCaptureMode(resolveSensitiveCaptureMode(updated.sensitiveCaptureMode));
       await refreshAll(selectedDayKeyRef.current);
-      setActionMessage(
-        `Settings saved. Capturing every ${updated.intervalMinutes} minute(s) with ${themeName(resolveThemeId(updated.themeId))}. Privacy mode: ${resolveSensitiveCaptureMode(updated.sensitiveCaptureMode)}.${updated.startupOnBootSupported ? ` Startup on boot ${updated.startupOnBoot ? "enabled" : "disabled"}.` : ""}`,
-      );
+      setActionMessage("Settings saved");
       return true;
     } catch {
       setActionMessage("Unable to save settings.");
@@ -1495,6 +1591,24 @@ function App() {
         return;
       }
 
+      const isModalOpen =
+        isThemeOnboardingOpen ||
+        isQuickStartOpen ||
+        isShortcutGuideOpen ||
+        isSettingsOpen ||
+        pendingRedactionCaptureId !== null ||
+        pendingDeleteCaptureId !== null ||
+        pendingDeleteDayKey !== null;
+
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "k") {
+        if (!isModalOpen) {
+          event.preventDefault();
+          setIsQuickLookOpen(false);
+          focusSearch();
+        }
+        return;
+      }
+
       if (event.ctrlKey || event.metaKey || event.altKey) {
         return;
       }
@@ -1545,14 +1659,35 @@ function App() {
         return;
       }
 
+      if (isQuickLookOpen) {
+        switch (event.key) {
+          case "Escape":
+          case " ":
+          case "Spacebar":
+            event.preventDefault();
+            closeQuickLook(null);
+            return;
+          case "ArrowLeft":
+          case "k":
+          case "K":
+            event.preventDefault();
+            shiftCapture(-1);
+            return;
+          case "ArrowRight":
+          case "j":
+          case "J":
+            event.preventDefault();
+            shiftCapture(1);
+            return;
+          default:
+            return;
+        }
+      }
+
       switch (event.key) {
         case "/":
           event.preventDefault();
-          setWorkspaceMode("browse");
-          window.requestAnimationFrame(() => {
-            searchInputRef.current?.focus();
-            searchInputRef.current?.select();
-          });
+          focusSearch();
           return;
         case "?":
           event.preventDefault();
@@ -1577,19 +1712,16 @@ function App() {
         case "R":
           event.preventDefault();
           openReviewWorkspace();
-          setActionMessage("Switched to Review workspace.");
           return;
         case "i":
         case "I":
           event.preventDefault();
           openIntelligenceWorkspace();
-          setActionMessage("Switched to Day Intelligence workspace.");
           return;
         case "v":
         case "V":
           event.preventDefault();
           openBrowseWorkspace();
-          setActionMessage("Switched to Browse workspace.");
           return;
         case "ArrowLeft":
           event.preventDefault();
@@ -1649,6 +1781,13 @@ function App() {
           return;
         case " ":
         case "Spacebar":
+          if (selectedCapture) {
+            event.preventDefault();
+            openQuickLook(null);
+          }
+          return;
+        case "p":
+        case "P":
           event.preventDefault();
           void togglePauseResume();
           return;
@@ -1695,6 +1834,13 @@ function App() {
     };
   }, [
     captureSearchQuery,
+    closeQuickLook,
+    focusSearch,
+    isQuickLookOpen,
+    openQuickLook,
+    selectedCapture,
+    setActionMessage,
+    setCaptureSearchQuery,
     deleteSelectedCapture,
     jumpThroughRetrievalResults,
     jumpToFirstCapture,
@@ -1780,211 +1926,208 @@ function App() {
     }
   }, [currentWindow]);
 
-  return (
-    <div className="memorylane-root" data-theme={appliedThemeId}>
-      <div className="app-shell">
-        <TopBar
-          hasNextDay={hasNextDay}
-          hasPreviousDay={hasPreviousDay}
-          isWindowMaximized={isWindowMaximized}
-          isRecording={isRecording}
-          selectedDayCaptureCount={selectedDayCaptureCount}
-          selectedDayKey={selectedDayKey}
-          todayKey={todayKey}
-          onOpenReviewWorkspace={openReviewWorkspace}
-          onOpenShortcuts={() => setIsShortcutGuideOpen(true)}
-          onOpenSettings={() => setIsSettingsOpen(true)}
-          onSelectDay={setSelectedDayKey}
-          onSelectNextDay={() => shiftDay(-1)}
-          onSelectPreviousDay={() => shiftDay(1)}
-          onCloseWindow={handleWindowClose}
-          onMinimizeWindow={handleWindowMinimize}
-          onToggleWindowMaximize={handleWindowToggleMaximize}
-        />
+  const showFilmstrip = workspaceMode === "browse" || workspaceMode === "review";
+  const clearSearch = () => setCaptureSearchQuery("");
 
-        <DayRail
-          workspaceMode={workspaceMode}
+  return (
+    <div className="memorylane-root">
+      <div className={isInspectorOpen ? "app-shell" : "app-shell inspector-collapsed"}>
+        <Sidebar
+          isRecording={isRecording}
           recentDays={recentDays}
           selectedDayKey={selectedDayKey}
           todayKey={todayKey}
+          workspaceMode={workspaceMode}
           onApplyStructuredFilter={(query) => {
             setCaptureSearchQuery(query);
-            setWorkspaceMode("browse");
-            setActionMessage(`Applied filter: ${query}`);
-            window.requestAnimationFrame(() => searchInputRef.current?.focus());
+            switchWorkspace("browse");
           }}
-          onFocusSearch={focusSearchWorkspace}
-          onOpenBrowseWorkspace={openBrowseWorkspace}
-          onOpenIntelligenceWorkspace={openIntelligenceWorkspace}
-          onOpenReviewWorkspace={openReviewWorkspace}
-          onOpenAllCapturesWorkspace={openAllCapturesWorkspace}
-          onOpenCalendarWorkspace={openCalendarWorkspace}
-          onSelectDay={setSelectedDayKey}
-          onShowDayTooltip={showDayTooltip}
           onHideDayTooltip={hideDayTooltip}
+          onOpenWorkspace={switchWorkspace}
+          onSelectDay={(dayKey) => {
+            setSelectedDayKey(dayKey);
+            switchWorkspace("browse");
+          }}
+          onShowDayTooltip={showDayTooltip}
         />
-        {workspaceMode === "browse" ? (
-          <ViewerPane
-            actionMessage={actionMessage}
-            captureHealth={captureHealth}
-            captures={filteredCaptures}
-            compareCaptureLabel={compareCaptureLabel}
-            compareImageDataUrl={compareImageDataUrl}
-            contextBadge={contextBadge}
-            isFilterActive={normalizedSearch.length > 0}
-            onCaptureNow={() => void triggerCaptureNow()}
-            onClearSearch={() => {
-              setCaptureSearchQuery("");
-              setActionMessage("Cleared search query.");
-            }}
-            onCopyPath={() => void copySelectedCapturePath()}
-            onClearCompareAnchor={clearCompareAnchor}
-            onDeleteCapture={() => void deleteSelectedCapture()}
-            onOpenSettings={() => setIsSettingsOpen(true)}
-            onOpenCapturesFolder={() => void openCapturesFolder()}
-            onRedactCapture={() => void redactSelectedCapture()}
-            onSetCompareAnchor={setCompareAnchor}
-            onSelectFirst={jumpToFirstCapture}
-            onSelectLast={jumpToLastCapture}
-            onSelectNext={() => shiftCapture(1)}
-            onSelectPrevious={() => shiftCapture(-1)}
-            onToggleFullscreen={() => void toggleFullscreen()}
-            onToggleBookmark={() => void toggleBookmark()}
-            onToggleFavorite={() => void toggleFavorite()}
-            selectedCapture={selectedCapture}
-            selectedCaptureIndex={selectedCaptureIndex}
-            selectedDayLabel={selectedDayLabel}
-            selectedDaySummary={selectedDaySummary}
-            selectedImageDataUrl={selectedImageDataUrl}
-          />
-        ) : null}
 
-        {workspaceMode === "review" ? (
-          <ReviewWorkspace
-            compareCaptureLabel={compareCaptureLabel}
-            isReviewBusy={isReviewBusy}
-            noteDirty={noteDirty}
-            noteDraft={noteDraft}
-            noteSaveState={noteSaveState}
-            onApplyTagFilter={applyTagFilter}
-            onClearCompareAnchor={clearCompareAnchor}
-            onJumpToReviewCapture={(captureId) => void jumpToReviewCapture(captureId)}
-            onNoteDraftChange={setNoteDraft}
-            onOpenBrowseWorkspace={openBrowseWorkspace}
-            onOpenIntelligenceWorkspace={openIntelligenceWorkspace}
-            onRedactCapture={() => void redactSelectedCapture()}
-            onSaveNote={() => void saveCaptureNote()}
-            onSaveTags={() => void saveCaptureTags()}
-            onSetCompareAnchor={setCompareAnchor}
-            onTagDraftChange={setTagDraft}
-            onToggleBookmark={() => void toggleBookmark()}
-            onToggleFavorite={() => void toggleFavorite()}
-            reviewShortcuts={reviewShortcuts}
-            selectedCapture={selectedCapture}
-            selectedDayLabel={selectedDayLabel}
-            tagDraft={tagDraft}
-          />
-        ) : null}
-
-        {workspaceMode === "intelligence" ? (
-          <IntelligenceWorkspace
-            dayIntelligence={dayIntelligence}
-            dayIntelligenceError={dayIntelligenceError}
-            dayIntelligenceLoading={isDayIntelligenceLoading}
-            onOpenBrowseWorkspace={openBrowseWorkspace}
-            onOpenReviewWorkspace={openReviewWorkspace}
-            onSearchForTerm={searchFromIntelligenceTerm}
-            selectedDayLabel={selectedDayLabel}
-            selectedDaySummary={selectedDaySummary}
-          />
-        ) : null}
-
-        {workspaceMode === "all-captures" ? (
-          <AllCapturesWorkspace
-            onOpenBrowseWorkspace={openBrowseWorkspace}
-            onOpenReviewWorkspace={openReviewWorkspace}
-            onOpenIntelligenceWorkspace={openIntelligenceWorkspace}
-            onSelectCapture={(captureId) => void jumpToAllCapturesResult(captureId)}
-          />
-        ) : null}
-
-        {workspaceMode === "calendar" ? (
-          <CalendarWorkspace
-            daySummaries={daySummaries}
-            onOpenBrowseWorkspace={openBrowseWorkspace}
-            onOpenReviewWorkspace={openReviewWorkspace}
-            onOpenIntelligenceWorkspace={openIntelligenceWorkspace}
-            onSelectDay={jumpToCalendarDay}
-          />
-        ) : null}
-
-        <UtilityRail
-          activeRetrievalResultIndex={activeRetrievalResultIndex}
-          captureSearchQuery={captureSearchQuery}
-          intervalMinutes={intervalMinutes}
-          isRetrievalLoading={isRetrievalLoading}
-          isRecording={isRecording}
-          isJumpToNowDisabled={!isTodaySelected || filteredCaptures.length === 0}
-          nextCaptureLabel={nextCaptureLabel}
-          ocrHealth={ocrHealth}
-          performanceSnapshot={performanceSnapshot}
-          retrievalError={retrievalError}
-          retrievalResults={retrievalResults}
-          onCaptureNow={() => void triggerCaptureNow()}
+        <TopBar
+          canDeleteDay={selectedDaySummary.captureCount > 0}
+          dayCaptureCount={selectedDayCaptureCount}
+          dayLabel={selectedDayLabel}
+          hasNextDay={hasNextDay}
+          hasPreviousDay={hasPreviousDay}
+          isInspectorOpen={isInspectorOpen}
+          isTodaySelected={isTodaySelected}
+          isWindowMaximized={isWindowMaximized}
+          search={{
+            activeResultIndex: activeRetrievalResultIndex,
+            inputRef: searchInputRef,
+            isLoading: isRetrievalLoading,
+            ocrWarning: ocrHealth.engineAvailable ? null : ocrHealth.statusMessage,
+            query: captureSearchQuery,
+            results: retrievalResults,
+            resultsError: retrievalError,
+            onActiveResultIndexChange: setActiveRetrievalResultIndex,
+            onQueryChange: setCaptureSearchQuery,
+            onSelectResult: (result) => {
+              const resultIndex = retrievalResults.findIndex((item) => item.captureId === result.captureId);
+              if (resultIndex >= 0) {
+                setActiveRetrievalResultIndex(resultIndex);
+              }
+              void jumpToRetrievalResult(result);
+            },
+          }}
+          onCloseWindow={handleWindowClose}
           onDeleteDay={() => void deleteSelectedDay()}
-          onOpenBrowseWorkspace={openBrowseWorkspace}
-          onOpenIntelligenceWorkspace={openIntelligenceWorkspace}
-          onOpenReviewWorkspace={openReviewWorkspace}
-          onJumpToNow={jumpToNow}
-          onSelectSearchResult={(result) => {
-            const resultIndex = retrievalResults.findIndex((item) => item.captureId === result.captureId);
-            if (resultIndex >= 0) {
-              setActiveRetrievalResultIndex(resultIndex);
-            }
-            void jumpToRetrievalResult(result);
-          }}
-          onSearchQueryChange={setCaptureSearchQuery}
-          onTogglePause={() => void togglePauseResume()}
-          searchInputRef={searchInputRef}
-          selectedDaySummary={selectedDaySummary}
-          storageStats={storageStats}
-          todayCaptureCount={todayCaptureCount}
-          workspaceMode={workspaceMode}
+          onJumpToToday={() => void jumpToToday()}
+          onMinimizeWindow={handleWindowMinimize}
+          onOpenCalendar={openCalendarWorkspace}
+          onOpenCapturesFolder={() => void openCapturesFolder()}
+          onOpenSettings={() => setIsSettingsOpen(true)}
+          onOpenShortcuts={() => setIsShortcutGuideOpen(true)}
+          onSelectNextDay={() => shiftDay(-1)}
+          onSelectPreviousDay={() => shiftDay(1)}
+          onToggleInspector={() => setIsInspectorOpen((current) => !current)}
+          onToggleWindowMaximize={handleWindowToggleMaximize}
         />
 
-        <TimelineStrip
-          captures={filteredCaptures}
-          hasNewerPages={hasNewerPages}
-          hasOlderPages={hasOlderPages}
-          hourMarkers={hourMarkers}
-          isPageLoading={isPageLoading}
-          loadedEndOffset={loadedEndOffset}
-          loadedStartOffset={loadedStartOffset}
-          onCaptureNow={() => void triggerCaptureNow()}
-          onClearSearch={() => {
-            setCaptureSearchQuery("");
-            setActionMessage("Cleared search query.");
-          }}
-          onLoadNewer={() => void loadNewerPage()}
-          onLoadOlder={() => void loadOlderPage()}
-          onOpenSettings={() => setIsSettingsOpen(true)}
-          onSelectCapture={setSelectedCaptureId}
-          onSelectCaptureAtIndex={(index) => {
-            const capture = filteredCaptures[index];
-            if (capture) {
-              setSelectedCaptureId(capture.id);
-            }
-          }}
-          searchQuery={captureSearchQuery}
-          selectedCaptureId={selectedCaptureId}
-          selectedCaptureIndex={selectedCaptureIndex}
-          selectedDayCaptureCount={selectedDayCaptureCount}
-          thumbRefs={timelineThumbRefs}
-          trailingSpacerWidth={trailingSpacerWidth}
-          leadingSpacerWidth={leadingSpacerWidth}
-          virtualCaptures={virtualCaptures}
-        />
+        <div className="content">
+          <div className="content-main">
+            {toast ? (
+              <div key={toast.id} className="toast" role="status" aria-live="polite">
+                {toast.message}
+              </div>
+            ) : null}
+
+            {workspaceMode === "browse" ? (
+              <Viewer
+                captureHealth={captureHealth}
+                captures={filteredCaptures}
+                compareCaptureLabel={compareCaptureLabel}
+                compareImageDataUrl={compareImageDataUrl}
+                contextBadge={contextBadge}
+                dayCaptureCount={selectedDaySummary.captureCount}
+                isFilterActive={normalizedSearch.length > 0}
+                selectedCapture={selectedCapture}
+                selectedCaptureIndex={selectedCaptureIndex}
+                selectedImageDataUrl={selectedImageDataUrl}
+                onCaptureNow={() => void triggerCaptureNow()}
+                onClearCompareAnchor={clearCompareAnchor}
+                onClearSearch={clearSearch}
+                onCopyPath={() => void copySelectedCapturePath()}
+                onDeleteCapture={() => void deleteSelectedCapture()}
+                onOpenCapturesFolder={() => void openCapturesFolder()}
+                onOpenQuickLook={openQuickLook}
+                onOpenSettings={() => setIsSettingsOpen(true)}
+                onRedactCapture={() => void redactSelectedCapture()}
+                onSelectNext={() => shiftCapture(1)}
+                onSelectPrevious={() => shiftCapture(-1)}
+                onSetCompareAnchor={setCompareAnchor}
+                onToggleBookmark={() => void toggleBookmark()}
+                onToggleFavorite={() => void toggleFavorite()}
+              />
+            ) : null}
+
+            {workspaceMode === "review" ? (
+              <ReviewWorkspace
+                compareCaptureLabel={compareCaptureLabel}
+                isReviewBusy={isReviewBusy}
+                noteDirty={noteDirty}
+                noteDraft={noteDraft}
+                noteSaveState={noteSaveState}
+                reviewShortcuts={reviewShortcuts}
+                selectedCapture={selectedCapture}
+                selectedDayLabel={selectedDayLabel}
+                tagDraft={tagDraft}
+                onApplyTagFilter={(tag) => {
+                  applyTagFilter(tag);
+                  switchWorkspace("browse");
+                }}
+                onClearCompareAnchor={clearCompareAnchor}
+                onJumpToReviewCapture={(captureId) => void jumpToReviewCapture(captureId)}
+                onNoteDraftChange={setNoteDraft}
+                onRedactCapture={() => void redactSelectedCapture()}
+                onSaveNote={() => void saveCaptureNote()}
+                onSaveTags={() => void saveCaptureTags()}
+                onSetCompareAnchor={setCompareAnchor}
+                onTagDraftChange={setTagDraft}
+                onToggleBookmark={() => void toggleBookmark()}
+                onToggleFavorite={() => void toggleFavorite()}
+              />
+            ) : null}
+
+            {workspaceMode === "intelligence" ? (
+              <IntelligenceWorkspace
+                dayIntelligence={dayIntelligence}
+                dayIntelligenceError={dayIntelligenceError}
+                dayIntelligenceLoading={isDayIntelligenceLoading}
+                selectedDayLabel={selectedDayLabel}
+                selectedDaySummary={selectedDaySummary}
+                onSearchForTerm={searchFromIntelligenceTerm}
+              />
+            ) : null}
+
+            {workspaceMode === "all-captures" ? (
+              <GalleryWorkspace onSelectCapture={(captureId, source) => void jumpToGalleryCapture(captureId, source)} />
+            ) : null}
+
+            {workspaceMode === "calendar" ? (
+              <CalendarWorkspace daySummaries={daySummaries} selectedDayKey={selectedDayKey} todayKey={todayKey} onSelectDay={jumpToCalendarDay} />
+            ) : null}
+
+            {showFilmstrip ? (
+              <Filmstrip
+                captures={filteredCaptures}
+                hasNewerPages={hasNewerPages}
+                hasOlderPages={hasOlderPages}
+                isPageLoading={isPageLoading}
+                leadingSpacerWidth={leadingSpacerWidth}
+                searchQuery={captureSearchQuery}
+                selectedCaptureId={selectedCaptureId}
+                selectedDayCaptureCount={selectedDayCaptureCount}
+                thumbRefs={timelineThumbRefs}
+                trailingSpacerWidth={trailingSpacerWidth}
+                virtualCaptures={virtualCaptures}
+                onCaptureNow={() => void triggerCaptureNow()}
+                onClearSearch={clearSearch}
+                onLoadNewer={() => void loadNewerPage()}
+                onLoadOlder={() => void loadOlderPage()}
+                onSelectCapture={setSelectedCaptureId}
+              />
+            ) : null}
+          </div>
+
+          <Inspector
+            intervalMinutes={intervalMinutes}
+            isOpen={isInspectorOpen}
+            isRecording={isRecording}
+            nextCaptureLabel={nextCaptureLabel}
+            selectedCapture={selectedCapture}
+            storageStats={storageStats}
+            todayCaptureCount={todayCaptureCount}
+            onApplyTagFilter={(tag) => {
+              applyTagFilter(tag);
+              switchWorkspace("browse");
+            }}
+            onCaptureNow={() => void triggerCaptureNow()}
+            onOpenReview={openReviewWorkspace}
+            onTogglePause={() => void togglePauseResume()}
+          />
+        </div>
       </div>
+
+      {isQuickLookOpen && selectedCapture ? (
+        <QuickLook
+          capture={selectedCapture}
+          imageDataUrl={selectedImageDataUrl}
+          index={selectedCaptureIndex}
+          total={filteredCaptures.length}
+          onClose={closeQuickLook}
+          onNext={() => shiftCapture(1)}
+          onPrevious={() => shiftCapture(-1)}
+        />
+      ) : null}
 
       {isSettingsOpen ? (
         <SettingsModal
@@ -1997,54 +2140,54 @@ function App() {
           draftIntervalMinutes={draftIntervalMinutes}
           draftPauseProcessesText={draftPauseProcessesText}
           draftPauseWindowKeywordsText={draftPauseWindowKeywordsText}
-          draftThemeId={draftThemeId}
           draftRetentionDays={draftRetentionDays}
           draftSensitiveCaptureMode={draftSensitiveCaptureMode}
           draftSensitiveWindowKeywordsText={draftSensitiveWindowKeywordsText}
-          draftStorageCapGb={draftStorageCapGb}
           draftStartupOnBoot={draftStartupOnBoot}
+          draftStorageCapGb={draftStorageCapGb}
+          draftThemeId={draftThemeId}
           isBackupBusy={isBackupBusy}
-          isReindexBusy={isOcrReindexBusy}
           isCustomInterval={isDraftIntervalCustom}
-          maintenanceStage={maintenanceStage}
+          isReindexBusy={isOcrReindexBusy}
           maintenanceProgress={maintenanceProgress}
+          maintenanceStage={maintenanceStage}
           ocrHealth={ocrHealth}
           ocrReindexStatus={ocrReindexStatus}
           ocrReindexStatusTone={ocrReindexStatusTone}
+          performanceSnapshot={performanceSnapshot}
+          settingsDirty={settingsDirty}
+          startupOnBootSupported={startupOnBootSupported}
+          storagePath={storagePath}
+          storageStats={storageStats}
+          themeOptions={THEME_OPTIONS}
           onBackupImportPathChange={setBackupImportPath}
           onBackupPassphraseChange={setBackupPassphrase}
+          onClose={() => setIsSettingsOpen(false)}
           onDraftExcludedProcessesTextChange={setDraftExcludedProcessesText}
           onDraftExcludedWindowKeywordsTextChange={setDraftExcludedWindowKeywordsText}
-          onEnableCustomInterval={() => setIsDraftIntervalCustom(true)}
-          onClose={() => setIsSettingsOpen(false)}
-          onDraftPauseProcessesTextChange={setDraftPauseProcessesText}
-          onDraftPauseWindowKeywordsTextChange={setDraftPauseWindowKeywordsText}
-          onDraftSensitiveCaptureModeChange={setDraftSensitiveCaptureMode}
-          onDraftSensitiveWindowKeywordsTextChange={setDraftSensitiveWindowKeywordsText}
-          onDraftThemeChange={setDraftThemeId}
           onDraftIntervalChange={(nextValue) => {
             setIsDraftIntervalCustom(true);
             setDraftIntervalMinutes(nextValue);
           }}
+          onDraftPauseProcessesTextChange={setDraftPauseProcessesText}
+          onDraftPauseWindowKeywordsTextChange={setDraftPauseWindowKeywordsText}
+          onDraftRetentionChange={setDraftRetentionDays}
+          onDraftSensitiveCaptureModeChange={setDraftSensitiveCaptureMode}
+          onDraftSensitiveWindowKeywordsTextChange={setDraftSensitiveWindowKeywordsText}
+          onDraftStartupOnBootChange={setDraftStartupOnBoot}
+          onDraftStorageCapChange={setDraftStorageCapGb}
+          onDraftThemeChange={setDraftThemeId}
+          onEnableCustomInterval={() => setIsDraftIntervalCustom(true)}
+          onExportBackup={() => void exportEncryptedBackup()}
+          onImportBackup={() => void importEncryptedBackup()}
+          onOpenCapturesFolder={() => void openCapturesFolder()}
+          onReindexAllCaptures={() => void reindexAllCaptures()}
+          onResetDraft={resetSettingsDraft}
+          onSaveSettings={() => void saveSettingsFromModal()}
           onSelectPresetInterval={(nextValue) => {
             setIsDraftIntervalCustom(false);
             setDraftIntervalMinutes(nextValue);
           }}
-          onDraftRetentionChange={setDraftRetentionDays}
-          onDraftStorageCapChange={setDraftStorageCapGb}
-          onDraftStartupOnBootChange={setDraftStartupOnBoot}
-          onExportBackup={() => void exportEncryptedBackup()}
-          onImportBackup={() => void importEncryptedBackup()}
-          onReindexAllCaptures={() => void reindexAllCaptures()}
-          onOpenCapturesFolder={() => void openCapturesFolder()}
-          onResetDraft={resetSettingsDraft}
-          onSaveSettings={() => void saveSettingsFromModal()}
-          settingsDirty={settingsDirty}
-          startupOnBootSupported={startupOnBootSupported}
-          themeId={themeId}
-          themeOptions={THEME_OPTIONS}
-          storagePath={storagePath}
-          storageStats={storageStats}
         />
       ) : null}
 
@@ -2083,74 +2226,50 @@ function App() {
 
       {pendingRedactionCaptureId !== null && selectedCapture && pendingRedactionCaptureId === selectedCapture.id ? (
         <ConfirmationModal
-          title="Redact selected capture?"
-          confirmLabel={isReviewBusy ? "redacting..." : "redact capture"}
+          title={`Redact the capture from ${selectedCapture.timestampLabel}?`}
+          confirmLabel={isReviewBusy ? "Redacting…" : "Redact"}
           isConfirmDisabled={isReviewBusy}
           onClose={() => setPendingRedactionCaptureId(null)}
           onConfirm={() => void confirmRedactSelectedCapture()}
-          body={
-            <>
-              <p>
-                Redact <strong>{selectedCapture.timestampLabel}</strong> and overwrite the screenshot preview with a
-                redacted version.
-              </p>
-              <p>This also updates the capture metadata while keeping the timeline entry in place.</p>
-            </>
-          }
+          body={<p>The screenshot and its window details are replaced with a redacted version. The capture stays on your timeline.</p>}
         />
       ) : null}
 
       {pendingDeleteCaptureId !== null && selectedCapture && pendingDeleteCaptureId === selectedCapture.id ? (
         <ConfirmationModal
-          title="Delete selected capture?"
-          confirmLabel="delete capture"
+          title={`Delete the capture from ${selectedCapture.timestampLabel}?`}
+          confirmLabel="Delete"
           onClose={() => setPendingDeleteCaptureId(null)}
           onConfirm={() => void confirmDeleteSelectedCapture()}
-          body={
-            <>
-              <p>
-                Delete the screenshot from <strong>{selectedCapture.timestampLabel}</strong>.
-              </p>
-              <p>This removes the image and thumbnail files for this capture.</p>
-            </>
-          }
+          body={<p>The screenshot and its thumbnail are removed from disk. This can't be undone.</p>}
         />
       ) : null}
 
       {pendingDeleteDayKey !== null ? (
         <ConfirmationModal
-          title="Delete selected day?"
-          confirmLabel="delete day"
+          title={`Delete every capture from ${pendingDeleteDayLabel}?`}
+          confirmLabel="Delete Day"
           onClose={() => setPendingDeleteDayKey(null)}
           onConfirm={() => void confirmDeleteSelectedDay()}
-          body={
-            <>
-              <p>
-                Delete every screenshot from <strong>{pendingDeleteDayLabel}</strong>.
-              </p>
-              <p>This will remove all captures for that day and cannot be undone.</p>
-            </>
-          }
+          body={<p>All {selectedDaySummary.captureCount} captures from this day are removed from disk. This can't be undone.</p>}
         />
       ) : null}
 
-      {globalTooltip && (
+      {globalTooltip ? (
         <div
-          className={globalTooltip.visible ? "custom-tooltip visible" : "custom-tooltip"}
+          className={globalTooltip.visible ? "tooltip visible" : "tooltip"}
           style={{
             left: `${globalTooltip.x}px`,
             top: `${globalTooltip.y}px`,
           }}
         >
-          <span className="custom-tooltip-title">{globalTooltip.title}</span>
-          <span className="custom-tooltip-subtitle">
-            <span className="custom-tooltip-bullet" />
-            {globalTooltip.subtitle}
-          </span>
+          <span className="tooltip-title">{globalTooltip.title}</span>
+          <span className="tooltip-subtitle">{globalTooltip.subtitle}</span>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
+
 
 export default App;

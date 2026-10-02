@@ -1,0 +1,391 @@
+/* ==========================================================================
+   Stage: the capture viewer and Quick Look
+   ========================================================================== */
+
+.stage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: var(--space-3) var(--space-5) var(--space-3);
+}
+
+.stage-caption {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-width: 0;
+  padding: 0 2px;
+}
+
+.stage-caption-main {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.stage-caption-main strong {
+  flex: 0 0 auto;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+  font-variant-numeric: tabular-nums;
+}
+
+.stage-caption-main span {
+  overflow: hidden;
+  font-size: var(--text-base);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-2);
+}
+
+.stage-caption-count {
+  flex: 0 0 auto;
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+.stage-warning {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 7px 12px;
+  border-radius: var(--r-sm);
+  font-size: var(--text-sm);
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.stage-canvas {
+  position: relative;
+  display: grid;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+  place-items: center;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding-bottom: 56px;
+  container-type: size;
+}
+
+.stage-image {
+  display: block;
+  width: min(100cqw, calc(100cqh * var(--ratio, 1.7778)));
+  height: auto;
+  aspect-ratio: var(--ratio, 1.7778);
+  border-radius: var(--r-md);
+  object-fit: cover;
+  background: var(--bg-canvas);
+  box-shadow: 0 0 0 0.5px var(--separator-strong), var(--shadow-lg);
+  transition: filter var(--dur-slow) var(--ease-out);
+  animation: image-in var(--dur-base) var(--ease-out);
+}
+
+.stage-image.is-placeholder {
+  filter: blur(3px) saturate(1.05);
+}
+
+.stage-loading {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  font-size: var(--text-sm);
+  color: var(--text-3);
+}
+
+.compare-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+  width: 100%;
+  height: 100%;
+}
+
+.compare-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+}
+
+.compare-panel figcaption {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.compare-panel figcaption span {
+  color: var(--text-3);
+}
+
+.compare-panel .stage-image {
+  width: 100%;
+  height: 100%;
+  aspect-ratio: auto;
+  object-fit: contain;
+  background: var(--bg-canvas);
+}
+
+/* Edge arrows: hidden until the pointer is over the canvas */
+
+.stage-step {
+  position: absolute;
+  top: calc(50% - 28px);
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  color: var(--text-1);
+  background: var(--material-regular);
+  backdrop-filter: var(--material-blur);
+  box-shadow: var(--shadow-md), inset 0 0 0 0.5px var(--separator-strong);
+  opacity: 0;
+  transform: translateY(-50%) scale(0.9);
+  transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-spring), background-color var(--dur-fast) var(--ease-out);
+}
+
+.stage-step-left {
+  left: 10px;
+}
+
+.stage-step-right {
+  right: 10px;
+}
+
+.stage-canvas:hover .stage-step:not(:disabled),
+.stage-step:focus-visible {
+  opacity: 1;
+  transform: translateY(-50%) scale(1);
+}
+
+.stage-step:hover {
+  background: var(--material-thick);
+}
+
+.stage-step:active {
+  transform: translateY(-50%) scale(var(--press-scale)) !important;
+}
+
+/* Floating toolbar */
+
+.stage-toolbar {
+  position: absolute;
+  left: 50%;
+  bottom: 4px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border-radius: var(--r-lg);
+  background: var(--material-regular);
+  backdrop-filter: var(--material-blur);
+  box-shadow: var(--shadow-popover);
+  transform: translateX(-50%);
+  animation: toolbar-in var(--dur-slow) var(--ease-spring);
+}
+
+.stage-toolbar-divider {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--separator-strong);
+}
+
+.tool-button {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 32px;
+  border-radius: var(--r-md);
+  color: var(--text-2);
+  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), transform var(--dur-instant) var(--ease-out);
+}
+
+.tool-button:hover {
+  color: var(--text-1);
+  background: var(--fill-2);
+}
+
+.tool-button.active {
+  color: var(--accent-strong);
+}
+
+.tool-button.active .lucide-icon {
+  fill: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.tool-button-danger:hover {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.info-popover {
+  bottom: calc(100% + 12px);
+  left: 50%;
+  width: 360px;
+  translate: -50% 0;
+  transform-origin: bottom center;
+}
+
+/* Empty state */
+
+.stage-empty {
+  justify-content: center;
+}
+
+.empty-state {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  max-width: 440px;
+  margin: auto;
+  padding: var(--space-8) var(--space-6);
+  text-align: center;
+  animation: rise-in var(--dur-slow) var(--ease-spring);
+}
+
+.empty-state h3 {
+  font-size: var(--text-xl);
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+}
+
+.empty-state p {
+  color: var(--text-2);
+}
+
+.empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2);
+  margin-top: 6px;
+}
+
+.empty-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-sm);
+  color: var(--text-3) !important;
+}
+
+/* --- Quick Look --------------------------------------------------------------- */
+
+.quicklook {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--palette-bg) 72%, transparent);
+  backdrop-filter: blur(24px) saturate(140%);
+  animation: fade-in var(--dur-base) var(--ease-out);
+}
+
+.quicklook-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  height: var(--toolbar-h);
+  padding: 0 var(--space-3) 0 var(--space-5);
+}
+
+.quicklook-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.quicklook-title strong {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.quicklook-title span,
+.quicklook-count {
+  font-size: var(--text-sm);
+  color: var(--text-2);
+}
+
+.quicklook-close {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  color: var(--text-1);
+  background: var(--fill-2);
+}
+
+.quicklook-close:hover {
+  background: var(--fill-3);
+}
+
+.quicklook-image {
+  display: block;
+  width: min(calc(100vw - 160px), calc((100vh - 150px) * var(--ratio, 1.7778)));
+  height: auto;
+  aspect-ratio: var(--ratio, 1.7778);
+  border-radius: var(--r-md);
+  object-fit: cover;
+  box-shadow: 0 30px 90px rgb(var(--palette-shadow) / 0.55), 0 0 0 0.5px var(--separator-strong);
+}
+
+.quicklook-step {
+  position: absolute;
+  top: 50%;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  color: var(--text-1);
+  background: var(--fill-2);
+  transform: translateY(-50%);
+  transition: background-color var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out);
+}
+
+.quicklook-step:hover:not(:disabled) {
+  background: var(--fill-3);
+}
+
+.quicklook-step:disabled {
+  opacity: 0.25;
+}
+
+.quicklook-step-left {
+  left: 24px;
+}
+
+.quicklook-step-right {
+  right: 24px;
+}
+
+.quicklook-hint {
+  position: absolute;
+  bottom: 18px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--text-sm);
+  color: var(--text-3);
+}

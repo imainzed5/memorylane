@@ -6,10 +6,13 @@ export const INTERVAL_MAX_MINUTES = 240;
 export const INTERVAL_OPTIONS = [1, 2, 5, 10, 15, 30, 60, 120];
 export const TIMELINE_PAGE_LIMIT = 240;
 export const TIMELINE_VIRTUAL_WINDOW = 72;
-export const TIMELINE_THUMB_WIDTH_PX = 96;
+// Filmstrip thumb width plus the gap between thumbs; drives the virtualised spacers.
+export const TIMELINE_THUMB_WIDTH_PX = 128;
 export const LEGACY_THEME_ID: ThemeId = "amber-noir";
 export const ONBOARDING_THEME_ID: ThemeId = "obsidian-jade";
+export const LIGHT_THEME_IDS: ReadonlySet<ThemeId> = new Set<ThemeId>(["arctic-slate"]);
 export const QUICKSTART_DISMISS_STORAGE_KEY = "memorylane.quickstart.v1.dismissed";
+export const INSPECTOR_OPEN_STORAGE_KEY = "memorylane.inspector.open";
 export const SEARCH_SUGGESTIONS = [
   "around 3 PM yesterday",
   "release notes",

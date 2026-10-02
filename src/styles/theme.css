@@ -1,184 +1,196 @@
+/* ==========================================================================
+   Design tokens
+   Themes override only the --palette-* values. Everything the UI consumes is a
+   semantic token derived from the palette, so a new theme is ~12 lines.
+   ========================================================================== */
+
 :root {
   color-scheme: dark;
-  --bg-root: #090a0c;
-  --bg-shell: rgba(17, 18, 20, 0.94);
-  --bg-panel: linear-gradient(180deg, rgba(31, 33, 36, 0.88), rgba(18, 20, 22, 0.94));
-  --bg-panel-soft: rgba(27, 29, 32, 0.78);
-  --bg-card: rgba(38, 40, 44, 0.66);
-  --text-primary: #f0ede8;
-  --text-muted: #b2ada4;
-  --text-soft: #77736c;
-  --line-soft: rgba(255, 255, 255, 0.09);
-  --line-strong: rgba(255, 255, 255, 0.16);
-  --accent-amber: #c79343;
-  --accent-amber-strong: #e0ad5a;
-  --accent-blue: #2f5d8a;
-  --accent-blue-strong: #3f73a8;
-  --accent-red: #cf5a44;
-  --accent-green: #77a95f;
-  --body-bg: #050607;
-  --shell-border: color-mix(in srgb, var(--text-primary) 8%, transparent);
-  --shell-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
-  --panel-border: rgba(255, 255, 255, 0.1);
-  --panel-shadow: 0 18px 48px rgba(0, 0, 0, 0.36);
-  --status-recording-border: color-mix(in srgb, var(--accent-amber) 36%, transparent);
-  --status-recording-bg: color-mix(in srgb, var(--accent-amber) 14%, transparent);
-  --status-paused-text: var(--text-muted);
-  --status-paused-border: color-mix(in srgb, var(--text-muted) 35%, transparent);
-  --status-paused-bg: color-mix(in srgb, var(--text-muted) 15%, transparent);
-  --day-entry-bg: color-mix(in srgb, var(--bg-panel-soft) 76%, #000 24%);
-  --day-entry-today-border: color-mix(in srgb, var(--accent-amber) 36%, transparent);
-  --day-entry-today-bg: color-mix(in srgb, var(--accent-amber) 12%, transparent);
-  --day-entry-selected-border: color-mix(in srgb, var(--accent-amber) 52%, transparent);
-  --day-entry-selected-bg: color-mix(in srgb, var(--accent-amber) 20%, transparent);
-  --day-entry-hover-border: color-mix(in srgb, var(--accent-amber) 36%, transparent);
-  --viewer-frame-bg: linear-gradient(180deg, #0d0f12, #07080a);
-  --viewer-image-bg: #060708;
-  --viewer-loading-text: #cad4e1;
-  --viewer-step-border: color-mix(in srgb, var(--accent-amber) 38%, transparent);
-  --viewer-step-bg: color-mix(in srgb, var(--bg-root) 84%, transparent);
-  --overlay-bg: linear-gradient(180deg, rgba(8, 12, 18, 0.35), rgba(8, 12, 18, 0.8));
-  --overlay-border: color-mix(in srgb, var(--accent-amber) 22%, transparent);
-  --overlay-label-text: color-mix(in srgb, var(--text-primary) 74%, transparent);
-  --context-text: color-mix(in srgb, var(--accent-amber) 54%, var(--text-primary) 46%);
-  --context-border: color-mix(in srgb, var(--accent-amber) 38%, transparent);
-  --context-bg: color-mix(in srgb, var(--accent-amber) 12%, transparent);
-  --viewer-message-bg: color-mix(in srgb, var(--bg-panel-soft) 70%, #000 30%);
-  --warning-text: color-mix(in srgb, var(--accent-red) 60%, var(--text-primary) 40%);
-  --warning-border: color-mix(in srgb, var(--accent-red) 35%, transparent);
-  --warning-bg: color-mix(in srgb, var(--accent-red) 24%, transparent);
-  --empty-border: color-mix(in srgb, var(--accent-amber) 28%, transparent);
-  --empty-bg: color-mix(in srgb, var(--bg-panel-soft) 72%, #000 28%);
-  --stat-card-bg: color-mix(in srgb, var(--bg-root) 72%, var(--bg-card) 28%);
-  --timeline-thumb-border: color-mix(in srgb, var(--accent-amber) 20%, transparent);
-  --timeline-thumb-bg: color-mix(in srgb, var(--bg-root) 78%, var(--bg-card) 22%);
-  --timeline-thumb-active-border: color-mix(in srgb, var(--accent-amber) 78%, transparent);
-  --timeline-thumb-active-ring: color-mix(in srgb, var(--accent-amber) 52%, transparent);
-  --thumb-preview-bg: color-mix(in srgb, var(--accent-blue) 18%, #04070d 82%);
-  --thumb-time: color-mix(in srgb, var(--text-primary) 82%, var(--accent-amber) 18%);
-  --timeline-empty-border: color-mix(in srgb, var(--accent-amber) 24%, transparent);
-  --timeline-empty-bg: color-mix(in srgb, var(--bg-root) 74%, var(--bg-panel-soft) 26%);
-  --button-bg: color-mix(in srgb, var(--bg-panel-soft) 84%, #000 16%);
-  --danger-text: color-mix(in srgb, var(--accent-red) 64%, var(--text-primary) 36%);
-  --danger-border: color-mix(in srgb, var(--accent-red) 54%, transparent);
-  --danger-bg: color-mix(in srgb, var(--accent-red) 28%, transparent);
-  --input-bg: color-mix(in srgb, var(--bg-root) 78%, var(--bg-panel-soft) 22%);
-  --placeholder-text: color-mix(in srgb, var(--text-muted) 78%, transparent);
-  --usage-track-bg: color-mix(in srgb, var(--accent-amber) 18%, transparent);
-  --usage-track-fill: linear-gradient(90deg, var(--accent-blue-strong), var(--accent-amber));
-  --overlay-scrim: rgba(6, 5, 4, 0.64);
-  --path-readout-bg: color-mix(in srgb, var(--bg-panel-soft) 74%, #000 26%);
-  --scrollbar-thumb: color-mix(in srgb, var(--accent-amber) 28%, transparent);
-  --radius-shell: 18px;
-  --radius-panel: 10px;
-  --radius-card: 8px;
+
+  /* Palette (Amber Noir) */
+  --palette-bg: #0b0c0e;
+  --palette-surface: #141518;
+  --palette-text: #f0ede8;
+  --palette-text-2: #aaa59c;
+  --palette-text-3: #747069;
+  --palette-accent: #c79343;
+  --palette-accent-strong: #e0ad5a;
+  --palette-on-accent: #1a1308;
+  --palette-accent-2: #3f73a8;
+  --palette-danger: #e0624b;
+  --palette-success: #6fbf73;
+  --palette-shadow: 0 0 0;
+
+  /* Surfaces */
+  --bg-window: var(--palette-bg);
+  --bg-sidebar: transparent;
+  --bg-content: var(--palette-surface);
+  --bg-canvas: color-mix(in srgb, var(--palette-bg) 70%, #000 30%);
+  --bg-raised: color-mix(in srgb, var(--palette-surface) 94%, var(--palette-text) 6%);
+  --bg-input: color-mix(in srgb, var(--palette-bg) 60%, var(--palette-surface) 40%);
+
+  /* Translucent fills (work on light and dark) */
+  --fill-1: color-mix(in srgb, var(--palette-text) 4%, transparent);
+  --fill-2: color-mix(in srgb, var(--palette-text) 7%, transparent);
+  --fill-3: color-mix(in srgb, var(--palette-text) 11%, transparent);
+  --fill-4: color-mix(in srgb, var(--palette-text) 16%, transparent);
+
+  /* Materials: blurred, translucent layers for toolbars, popovers, sheets */
+  --material-thin: color-mix(in srgb, var(--palette-surface) 62%, transparent);
+  --material-regular: color-mix(in srgb, var(--palette-surface) 78%, transparent);
+  --material-thick: color-mix(in srgb, var(--palette-surface) 92%, transparent);
+  --material-blur: blur(28px) saturate(170%);
+  --scrim: color-mix(in srgb, var(--palette-bg) 58%, transparent);
+
+  /* Lines */
+  --separator: color-mix(in srgb, var(--palette-text) 8%, transparent);
+  --separator-strong: color-mix(in srgb, var(--palette-text) 14%, transparent);
+  --hairline-highlight: inset 0 1px 0 color-mix(in srgb, var(--palette-text) 6%, transparent);
+
+  /* Text */
+  --text-1: var(--palette-text);
+  --text-2: var(--palette-text-2);
+  --text-3: var(--palette-text-3);
+
+  /* Accent + status */
+  --accent: var(--palette-accent);
+  --accent-strong: var(--palette-accent-strong);
+  --accent-soft: color-mix(in srgb, var(--palette-accent) 16%, transparent);
+  --accent-ring: color-mix(in srgb, var(--palette-accent) 55%, transparent);
+  --on-accent: var(--palette-on-accent);
+  --accent-2: var(--palette-accent-2);
+  --danger: var(--palette-danger);
+  --danger-soft: color-mix(in srgb, var(--palette-danger) 16%, transparent);
+  --success: var(--palette-success);
+
+  /* Radii */
+  --r-xs: 5px;
+  --r-sm: 7px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-xl: 20px;
+  --r-pill: 999px;
+
+  /* Elevation */
+  --shadow-sm: 0 1px 2px rgb(var(--palette-shadow) / 0.24);
+  --shadow-md: 0 4px 14px rgb(var(--palette-shadow) / 0.28), 0 1px 3px rgb(var(--palette-shadow) / 0.2);
+  --shadow-lg: 0 18px 48px rgb(var(--palette-shadow) / 0.38), 0 4px 12px rgb(var(--palette-shadow) / 0.22);
+  --shadow-popover: 0 24px 64px rgb(var(--palette-shadow) / 0.42), 0 0 0 0.5px var(--separator-strong);
+
+  /* Spacing (4px grid) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* Type */
   --font-body: "Geist Sans", "Segoe UI Variable Text", "Segoe UI", sans-serif;
-  --font-title: "Geist Sans", "Segoe UI Variable Text", "Segoe UI", sans-serif;
   --font-mono: "Geist Mono", "Cascadia Mono", "Consolas", monospace;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 14px;
+  --text-lg: 17px;
+  --text-xl: 22px;
+  --text-2xl: 28px;
+  --tracking-tight: -0.018em;
+  --tracking-caps: 0.06em;
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  /* Critically damped-ish spring, ~420ms */
+  --ease-spring: linear(
+    0, 0.009, 0.035 2.1%, 0.141 4.4%, 0.281 6.7%, 0.723 12.9%, 0.938 16.7%,
+    1.017 19.4%, 1.067, 1.084 24.3%, 1.077 26.6%, 1.035 31.9%, 1.008 37.5%,
+    0.996 44.4%, 1.001 58.3%, 1
+  );
+  /* Gentle spring with no visible overshoot, for layout */
+  --ease-spring-soft: linear(
+    0, 0.04 1.8%, 0.16 4%, 0.52 10.4%, 0.73 15.4%, 0.87 20.8%, 0.95 27%,
+    0.985 34.4%, 0.998 44%, 1
+  );
+  --dur-instant: 90ms;
+  --dur-fast: 160ms;
+  --dur-base: 240ms;
+  --dur-slow: 420ms;
+  --press-scale: 0.965;
+
+  /* Layout */
+  --sidebar-w: 232px;
+  --inspector-w: 288px;
+  --toolbar-h: 52px;
+}
+
+/* Windows 11 Mica: let the backdrop show through the window chrome */
+:root[data-material="mica"] {
+  --bg-window: color-mix(in srgb, var(--palette-bg) 38%, transparent);
+  --bg-content: color-mix(in srgb, var(--palette-surface) 86%, transparent);
 }
 
 :root[data-theme="obsidian-jade"] {
   color-scheme: dark;
-  --bg-root: #0b0f0e;
-  --bg-shell: rgba(14, 20, 17, 0.95);
-  --bg-panel: #0d1210;
-  --bg-panel-soft: rgba(13, 18, 16, 0.94);
-  --bg-card: rgba(19, 33, 24, 0.8);
-  --text-primary: #c8ddd6;
-  --text-muted: #7aa89e;
-  --text-soft: #5f887f;
-  --line-soft: rgba(62, 207, 142, 0.14);
-  --line-strong: rgba(62, 207, 142, 0.28);
-  --accent-amber: #3ecf8e;
-  --accent-amber-strong: #64ddaa;
-  --accent-blue: #1e5f8a;
-  --accent-blue-strong: #2f7aab;
-  --accent-red: #c84a3a;
-  --accent-green: #5a9e72;
-  --body-bg: #09100d;
-  --viewer-frame-bg: linear-gradient(180deg, #08110f, #050a08);
-  --viewer-image-bg: #07100d;
-  --viewer-loading-text: #afcfc4;
-  --overlay-bg: linear-gradient(180deg, rgba(7, 11, 10, 0.35), rgba(7, 11, 10, 0.82));
-  --overlay-scrim: rgba(5, 9, 8, 0.64);
+  --palette-bg: #0a0e0d;
+  --palette-surface: #111816;
+  --palette-text: #d4e6df;
+  --palette-text-2: #86ada3;
+  --palette-text-3: #5c8279;
+  --palette-accent: #3ecf8e;
+  --palette-accent-strong: #64ddaa;
+  --palette-on-accent: #04140c;
+  --palette-accent-2: #2f7aab;
+  --palette-danger: #e0614f;
+  --palette-success: #3ecf8e;
 }
 
 :root[data-theme="arctic-slate"] {
   color-scheme: light;
-  --bg-root: #f0f2f5;
-  --bg-shell: rgba(255, 255, 255, 0.96);
-  --bg-panel: #f7f8fa;
-  --bg-panel-soft: #f2f4f8;
-  --bg-card: #eef0f4;
-  --text-primary: #1a1e26;
-  --text-muted: #6b7385;
-  --text-soft: #8d95a8;
-  --line-soft: rgba(30, 40, 60, 0.12);
-  --line-strong: rgba(30, 40, 60, 0.22);
-  --accent-amber: #3a6fd8;
-  --accent-amber-strong: #5a86e6;
-  --accent-blue: #7c5cbf;
-  --accent-blue-strong: #9474d1;
-  --accent-red: #d04444;
-  --accent-green: #3a9e6f;
-  --body-bg: #eef2f7;
-  --shell-shadow: 0 16px 36px rgba(23, 30, 43, 0.12);
-  --panel-shadow: 0 8px 24px rgba(23, 30, 43, 0.08);
-  --viewer-frame-bg: linear-gradient(180deg, #dce4f2, #ccd8eb);
-  --viewer-image-bg: #d6dfef;
-  --viewer-loading-text: #4c5870;
-  --overlay-bg: linear-gradient(180deg, rgba(239, 244, 252, 0.55), rgba(228, 236, 248, 0.88));
-  --overlay-scrim: rgba(200, 210, 226, 0.56);
+  --palette-bg: #eceff3;
+  --palette-surface: #fbfcfd;
+  --palette-text: #1a1e26;
+  --palette-text-2: #5f6779;
+  --palette-text-3: #8a92a5;
+  --palette-accent: #2f6fe0;
+  --palette-accent-strong: #1f5fd0;
+  --palette-on-accent: #ffffff;
+  --palette-accent-2: #7c5cbf;
+  --palette-danger: #d23f3f;
+  --palette-success: #2f9e6b;
+  --palette-shadow: 30 40 60;
+  --bg-canvas: color-mix(in srgb, var(--palette-bg) 80%, #c9d2e0 20%);
+  --bg-input: #ffffff;
+  --scrim: color-mix(in srgb, #c8d0dc 50%, transparent);
 }
 
 :root[data-theme="deep-plum"] {
   color-scheme: dark;
-  --bg-root: #0d0b12;
-  --bg-shell: rgba(18, 16, 24, 0.95);
-  --bg-panel: #18151f;
-  --bg-panel-soft: rgba(24, 21, 31, 0.94);
-  --bg-card: rgba(33, 29, 44, 0.8);
-  --text-primary: #e2d9f0;
-  --text-muted: #9b8fb8;
-  --text-soft: #7f739d;
-  --line-soft: rgba(180, 140, 255, 0.16);
-  --line-strong: rgba(180, 140, 255, 0.3);
-  --accent-amber: #9b6dff;
-  --accent-amber-strong: #b18cff;
-  --accent-blue: #d4547a;
-  --accent-blue-strong: #e17395;
-  --accent-red: #c94a4a;
-  --accent-green: #5a9e72;
-  --body-bg: #100c16;
-  --viewer-frame-bg: linear-gradient(180deg, #151228, #0f0d1c);
-  --viewer-image-bg: #131125;
-  --viewer-loading-text: #d4c8ec;
-  --overlay-bg: linear-gradient(180deg, rgba(15, 13, 25, 0.38), rgba(15, 13, 25, 0.82));
-  --overlay-scrim: rgba(11, 9, 18, 0.68);
+  --palette-bg: #0d0b12;
+  --palette-surface: #15121c;
+  --palette-text: #e6ddf3;
+  --palette-text-2: #a395c2;
+  --palette-text-3: #7a6e98;
+  --palette-accent: #9b6dff;
+  --palette-accent-strong: #b591ff;
+  --palette-on-accent: #ffffff;
+  --palette-accent-2: #d4547a;
+  --palette-danger: #e05a5a;
+  --palette-success: #5fbf86;
 }
 
 :root[data-theme="midnight-blue"] {
   color-scheme: dark;
-  --bg-root: #090c12;
-  --bg-shell: rgba(13, 17, 25, 0.95);
-  --bg-panel: #101521;
-  --bg-panel-soft: rgba(16, 21, 33, 0.94);
-  --bg-card: rgba(22, 29, 46, 0.8);
-  --text-primary: #d4dff0;
-  --text-muted: #7a90b8;
-  --text-soft: #4f6285;
-  --line-soft: rgba(100, 150, 255, 0.14);
-  --line-strong: rgba(100, 150, 255, 0.28);
-  --accent-amber: #4d8ef0;
-  --accent-amber-strong: #6aaeff;
-  --accent-blue: #2a7a8a;
-  --accent-blue-strong: #3e95a8;
-  --accent-red: #d04848;
-  --accent-green: #4a9e6a;
-  --body-bg: #0b111a;
-  --viewer-frame-bg: linear-gradient(180deg, #111a2e, #0a1120);
-  --viewer-image-bg: #0f1728;
-  --viewer-loading-text: #bccce5;
-  --overlay-bg: linear-gradient(180deg, rgba(9, 15, 27, 0.36), rgba(9, 15, 27, 0.82));
-  --overlay-scrim: rgba(8, 11, 18, 0.68);
+  --palette-bg: #090c12;
+  --palette-surface: #0f141e;
+  --palette-text: #dae4f3;
+  --palette-text-2: #8399c0;
+  --palette-text-3: #586a8d;
+  --palette-accent: #4d8ef0;
+  --palette-accent-strong: #6eaaff;
+  --palette-on-accent: #ffffff;
+  --palette-accent-2: #3e95a8;
+  --palette-danger: #e05656;
+  --palette-success: #4fb37a;
 }
