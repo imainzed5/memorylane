@@ -14,6 +14,7 @@
       {
         "title": "MemoryLane",
         "decorations": false,
+        "transparent": true,
         "width": 1440,
         "height": 900,
         "minWidth": 1280,

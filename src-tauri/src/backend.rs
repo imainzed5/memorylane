@@ -3132,6 +3132,26 @@ fn toggle_fullscreen(app: AppHandle) -> Result<bool, String> {
     Ok(next_fullscreen_state)
 }
 
+/// Applies the Windows 11 Mica backdrop behind the transparent webview.
+/// Returns false on platforms without Mica so the UI can fall back to an opaque background.
+#[tauri::command]
+fn set_window_material(app: AppHandle, dark: bool) -> Result<bool, String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main window not found".to_string())?;
+
+    #[cfg(target_os = "windows")]
+    {
+        Ok(window_vibrancy::apply_mica(&window, Some(dark)).is_ok())
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (window, dark);
+        Ok(false)
+    }
+}
+
 #[tauri::command]
 fn get_pause_state(state: State<SharedState>) -> PauseStatePayload {
     PauseStatePayload {
@@ -5157,6 +5177,7 @@ pub fn run() {
             set_pause_state,
             get_fullscreen_state,
             toggle_fullscreen,
+            set_window_material,
             capture_now,
             get_day_summaries,
             get_day_captures,
