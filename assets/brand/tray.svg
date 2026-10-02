@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- MemoryLane tray glyph: the app icon's wave filmstrip, simplified for 16-32 px. -->
+  <defs>
+    <mask id="holes"><rect width="32" height="32" fill="white"/><rect x="4.00" y="15.61" width="2" height="2" rx="0.4" fill="black"/><rect x="4.00" y="26.81" width="2" height="2" rx="0.4" fill="black"/><rect x="9.50" y="13.44" width="2" height="2" rx="0.4" fill="black"/><rect x="9.50" y="24.64" width="2" height="2" rx="0.4" fill="black"/><rect x="15.00" y="9.40" width="2" height="2" rx="0.4" fill="black"/><rect x="15.00" y="20.60" width="2" height="2" rx="0.4" fill="black"/><rect x="20.50" y="5.36" width="2" height="2" rx="0.4" fill="black"/><rect x="20.50" y="16.56" width="2" height="2" rx="0.4" fill="black"/><rect x="26.00" y="3.19" width="2" height="2" rx="0.4" fill="black"/><rect x="26.00" y="14.39" width="2" height="2" rx="0.4" fill="black"/></mask>
+    <clipPath id="inner"><path d="M2,18.7 C14,18.7 18,5.7 30,5.7 L30,13.3 C18,13.3 14,26.3 2,26.3 Z"/></clipPath>
+  </defs>
+  <g mask="url(#holes)">
+    <path d="M2,15.3 C14,15.3 18,2.3 30,2.3 L30,16.7 C18,16.7 14,29.7 2,29.7 Z" fill="#c4602a"/>
+    <path d="M2,18.7 C14,18.7 18,5.7 30,5.7 L30,13.3 C18,13.3 14,26.3 2,26.3 Z" fill="#e8b04f"/>
+    <g clip-path="url(#inner)"><rect x="10.5" y="0" width="1.6" height="32" fill="#c4602a"/><rect x="19.9" y="0" width="1.6" height="32" fill="#c4602a"/></g>
+  </g>
+</svg>

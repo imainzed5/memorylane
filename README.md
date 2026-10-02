@@ -1,7 +1,7 @@
 # MemoryLane
 
 <p align="center">
-  <img src="memorylane_logo.jpg" alt="MemoryLane logo" width="560" />
+  <img src="assets/brand/memorylane-icon-256.png" alt="MemoryLane app icon" width="160" />
 </p>
 
 > **Ever wonder where your day went?**

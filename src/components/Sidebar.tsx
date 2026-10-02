@@ -50,7 +50,7 @@ export function Sidebar({
   return (
     <aside className="sidebar" data-tauri-drag-region>
       <div className="sidebar-brand" data-tauri-drag-region>
-        <img src="/memorylane_icon_logo.png" alt="" />
+        <img src="/memorylane-icon-64.png" alt="" />
         <strong>MemoryLane</strong>
         <span
           className={isRecording ? "recording-dot is-live" : "recording-dot"}

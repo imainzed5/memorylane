@@ -48,9 +48,7 @@
 .sidebar-brand img {
   width: 22px;
   height: 22px;
-  border-radius: 6px;
-  object-fit: cover;
-  box-shadow: 0 0 0 0.5px var(--separator-strong), var(--shadow-sm);
+  object-fit: contain;
   pointer-events: none;
 }
 

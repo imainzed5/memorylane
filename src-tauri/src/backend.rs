@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Manager, Runtime, State, WindowEvent};
+use tauri::{AppHandle, Emitter, Listener, Manager, Runtime, State, WindowEvent};
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::Foundation::CloseHandle;
 #[cfg(target_os = "windows")]
@@ -2870,19 +2870,42 @@ fn start_capture_worker(app: AppHandle, state: SharedState) {
     });
 }
 
+const TRAY_ID: &str = "memorylane-tray";
+
+/// Tray glyphs are rendered from assets/brand/tray*.svg; see assets/brand/README.md.
+fn tray_image(is_paused: bool) -> Result<tauri::image::Image<'static>, String> {
+    let bytes: &[u8] = if is_paused {
+        include_bytes!("../icons/tray-paused.png")
+    } else {
+        include_bytes!("../icons/tray.png")
+    };
+    let rgba = image::load_from_memory_with_format(bytes, image::ImageFormat::Png)
+        .map_err(|error| format!("failed to decode tray icon png: {error}"))?
+        .to_rgba8();
+    let (width, height) = rgba.dimensions();
+    Ok(tauri::image::Image::new_owned(rgba.into_raw(), width, height))
+}
+
+fn tray_tooltip(is_paused: bool) -> &'static str {
+    if is_paused {
+        "MemoryLane - Paused"
+    } else {
+        "MemoryLane - Recording"
+    }
+}
+
+fn sync_tray_pause_state(app: &AppHandle, is_paused: bool) {
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        if let Ok(icon) = tray_image(is_paused) {
+            let _ = tray.set_icon(Some(icon));
+        }
+        let _ = tray.set_tooltip(Some(tray_tooltip(is_paused)));
+    }
+}
+
 fn setup_tray(app: &AppHandle) -> Result<(), String> {
-    let tray_icon_rgba = image::load_from_memory_with_format(
-        include_bytes!("../icons/icon.png"),
-        image::ImageFormat::Png,
-    )
-    .map_err(|error| format!("failed to decode tray logo png: {error}"))?
-    .to_rgba8();
-    let (tray_icon_width, tray_icon_height) = tray_icon_rgba.dimensions();
-    let tray_icon = tauri::image::Image::new_owned(
-        tray_icon_rgba.into_raw(),
-        tray_icon_width,
-        tray_icon_height,
-    );
+    let is_paused = app.state::<SharedState>().pause_state.load(Ordering::Relaxed);
+    let tray_icon = tray_image(is_paused)?;
 
     let open_dashboard = MenuItemBuilder::with_id("open_dashboard", "Open Dashboard")
         .build(app)
@@ -2911,10 +2934,10 @@ fn setup_tray(app: &AppHandle) -> Result<(), String> {
         .build()
         .map_err(|error| format!("failed to build tray menu: {error}"))?;
 
-    TrayIconBuilder::new()
+    TrayIconBuilder::with_id(TRAY_ID)
         .icon(tray_icon)
         .menu(&menu)
-        .tooltip("MemoryLane")
+        .tooltip(tray_tooltip(is_paused))
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open_dashboard" => {
                 show_main_window(app);
@@ -2974,6 +2997,17 @@ fn setup_tray(app: &AppHandle) -> Result<(), String> {
         })
         .build(app)
         .map_err(|error| format!("failed to build tray icon: {error}"))?;
+
+    // Every pause change (UI, tray menu, policy auto-pause) emits this event.
+    let listener_app = app.clone();
+    app.listen_any("pause-state-changed", move |event| {
+        let is_paused = serde_json::from_str::<serde_json::Value>(event.payload())
+            .ok()
+            .and_then(|payload| payload.get("isPaused").and_then(|value| value.as_bool()));
+        if let Some(is_paused) = is_paused {
+            sync_tray_pause_state(&listener_app, is_paused);
+        }
+    });
 
     Ok(())
 }
