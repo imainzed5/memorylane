@@ -1412,6 +1412,28 @@ fn load_image_data_url(path: &str) -> Result<String, String> {
     Ok(format!("data:{mime};base64,{}", BASE64.encode(bytes)))
 }
 
+/// Transparent 1x1 GIF so a capture whose files are gone renders as an empty tile.
+const MISSING_THUMBNAIL_DATA_URL: &str =
+    "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+
+/// One missing or unreadable file must not take down a whole capture list: fall back to a
+/// thumbnail encoded in memory from the full image, then to a blank placeholder.
+fn load_thumbnail_data_url(thumbnail_path: &str, image_path: &str) -> String {
+    if let Ok(url) = load_image_data_url(thumbnail_path) {
+        return url;
+    }
+    image::open(image_path)
+        .ok()
+        .and_then(|full| {
+            let mut bytes = Vec::new();
+            JpegEncoder::new_with_quality(&mut bytes, 68)
+                .encode_image(&full.thumbnail(360, 202).to_rgb8())
+                .ok()?;
+            Some(format!("data:image/jpeg;base64,{}", BASE64.encode(bytes)))
+        })
+        .unwrap_or_else(|| MISSING_THUMBNAIL_DATA_URL.to_string())
+}
+
 fn to_timestamp_label(captured_at: &str) -> String {
     chrono::DateTime::parse_from_rfc3339(captured_at)
         .map(|dt| dt.with_timezone(&Local).format("%I:%M %p").to_string())
@@ -3198,6 +3220,7 @@ fn load_day_captures_page(
     ) in rows
     {
         let timestamp_label = to_timestamp_label(&captured_at);
+        let thumbnail_data_url = load_thumbnail_data_url(&thumbnail_path, &image_path);
 
         captures.push(DayCapturePayload {
             id,
@@ -3205,7 +3228,7 @@ fn load_day_captures_page(
             captured_at,
             timestamp_label,
             image_path,
-            thumbnail_data_url: load_image_data_url(&thumbnail_path)?,
+            thumbnail_data_url,
             capture_note,
             ocr_text,
             window_title,
@@ -3332,6 +3355,7 @@ fn get_all_captures_page_internal(
     ) in rows
     {
         let timestamp_label = to_timestamp_label(&captured_at);
+        let thumbnail_data_url = load_thumbnail_data_url(&thumbnail_path, &image_path);
 
         captures.push(DayCapturePayload {
             id,
@@ -3339,7 +3363,7 @@ fn get_all_captures_page_internal(
             captured_at,
             timestamp_label,
             image_path,
-            thumbnail_data_url: load_image_data_url(&thumbnail_path)?,
+            thumbnail_data_url,
             capture_note,
             ocr_text,
             window_title,

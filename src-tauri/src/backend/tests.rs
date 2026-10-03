@@ -114,6 +114,17 @@ fn title_turning_sensitive_during_capture_discards_pixels() {
     assert_eq!(fixture_capture_count(&state), 0);
 }
 
+#[test]
+fn missing_thumbnail_files_fall_back_instead_of_failing() {
+    let temp = tempfile::tempdir().unwrap();
+    let full = temp.path().join("full.jpg");
+    image::RgbImage::from_pixel(64, 36, image::Rgb([200, 10, 10])).save(&full).unwrap();
+    let missing = temp.path().join("missing_thumb.jpg");
+    let regenerated = load_thumbnail_data_url(&missing.to_string_lossy(), &full.to_string_lossy());
+    assert!(regenerated.starts_with("data:image/jpeg;base64,"));
+    let gone = temp.path().join("gone.jpg");
+    assert_eq!(load_thumbnail_data_url(&missing.to_string_lossy(), &gone.to_string_lossy()), MISSING_THUMBNAIL_DATA_URL);
+}
 
 #[test]
 fn failed_capture_transaction_removes_encoded_files_and_partial_rows() {
