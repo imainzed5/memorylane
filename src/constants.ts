@@ -11,7 +11,6 @@ export const TIMELINE_THUMB_WIDTH_PX = 128;
 export const LEGACY_THEME_ID: ThemeId = "amber-noir";
 export const ONBOARDING_THEME_ID: ThemeId = "obsidian-jade";
 export const LIGHT_THEME_IDS: ReadonlySet<ThemeId> = new Set<ThemeId>(["arctic-slate"]);
-export const QUICKSTART_DISMISS_STORAGE_KEY = "memorylane.quickstart.v1.dismissed";
 export const INSPECTOR_OPEN_STORAGE_KEY = "memorylane.inspector.open";
 export const SEARCH_SUGGESTIONS = [
   "around 3 PM yesterday",

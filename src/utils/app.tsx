@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { CaptureRecord, DaySummary, SensitiveCaptureMode, ThemeId } from "../types";
-import { EMPTY_DENSITY, INTERVAL_MAX_MINUTES, INTERVAL_MIN_MINUTES, LEGACY_THEME_ID, MATCH_SOURCE_LABELS, QUICKSTART_DISMISS_STORAGE_KEY, THEME_OPTIONS } from "../constants";
+import { EMPTY_DENSITY, INTERVAL_MAX_MINUTES, INTERVAL_MIN_MINUTES, LEGACY_THEME_ID, MATCH_SOURCE_LABELS, THEME_OPTIONS } from "../constants";
 
 export function isThemeId(value: string): value is ThemeId {
   return THEME_OPTIONS.some((option) => option.id === value);
@@ -72,26 +72,6 @@ export function haveSameListValues(left: string[], right: string[]): boolean {
 
 export function parseTagDraftInput(value: string): string[] {
   return parseListEditorText(value, 16).map((entry) => entry.slice(0, 32));
-}
-
-export function hasDismissedQuickStart(): boolean {
-  try {
-    return window.localStorage.getItem(QUICKSTART_DISMISS_STORAGE_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-export function markQuickStartDismissed(): void {
-  try {
-    window.localStorage.setItem(QUICKSTART_DISMISS_STORAGE_KEY, "1");
-  } catch {
-    // Ignore localStorage availability issues in restricted runtimes.
-  }
-}
-
-export function themeName(themeId: ThemeId): string {
-  return THEME_OPTIONS.find((option) => option.id === themeId)?.name ?? "Theme";
 }
 
 export function dayKeyFromDate(date: Date): string {

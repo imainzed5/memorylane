@@ -41,7 +41,8 @@ src/
   App.tsx             # app state, data loading, keyboard shortcuts, workspace switching
   components/         # TopBar, Sidebar, Viewer, Inspector, Filmstrip, QuickLook, primitives
   components/workspaces/  # Calendar, Gallery (All Captures), Review, Intelligence
-  components/modals/  # SettingsModal, Dialogs (theme picker, onboarding, shortcuts, confirm)
+  components/modals/  # SettingsModal, Onboarding (first-launch setup), Dialogs (theme picker,
+                      # shortcuts, confirm)
   hooks/              # useArchiveSearch, useDayIntelligence
   utils/app.tsx       # formatting, theme/setting resolvers, small helpers
   utils/motion.ts     # runViewTransition + prefersReducedMotion
@@ -100,12 +101,14 @@ New backend commands: add the fn in `backend.rs`, register it in `generate_handl
 - Right-click menus go through `useContextMenu` (`components/ContextMenu.tsx`); capture menus come
   from `buildCaptureMenu` in `App.tsx` so every surface offers the same actions. The provider
   suppresses the WebView menu everywhere else (Shift + right-click keeps it in dev builds).
+- Fresh installs start paused; recording begins when onboarding finishes with Start Recording.
+  An empty `themeId` setting is what reopens onboarding.
 - Transient feedback goes through `setActionMessage` (auto-dismissing toast). Don't add
   persistent status bars.
 - UI copy uses Title Case for buttons and menu items, and sentence case for descriptions.
 - Keyboard: Space opens Quick Look, P pauses or resumes, C captures, Ctrl K or `/` focuses search,
-  ←/→ steps captures, `?` shows shortcuts. Update `KeyboardShortcutsModal` and `QuickStartModal`
-  in `Dialogs.tsx` whenever a shortcut changes.
+  ←/→ steps captures, `?` shows shortcuts. Update `KeyboardShortcutsModal` in `Dialogs.tsx`
+  and the Finish step tips in `Onboarding.tsx` whenever a shortcut changes.
 
 ## Gotchas
 

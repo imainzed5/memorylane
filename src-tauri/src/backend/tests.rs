@@ -386,6 +386,9 @@ fn deletion_refuses_directory_indirection_and_preserves_external_tree() {
         let db_path = temp_dir.path().join("memorylane-test.db");
         let conn = Connection::open(&db_path).expect("failed to open test sqlite db");
         initialize_database(&conn).expect("failed to initialize test db schema");
+        // Fresh installs start paused until onboarding finishes; tests exercise a recording archive.
+        conn.execute("UPDATE settings SET is_paused = 0 WHERE id = 1", [])
+            .expect("failed to unpause test settings");
 
         let settings = read_settings(&conn).expect("failed to read default settings");
 
@@ -563,6 +566,8 @@ fn deletion_refuses_directory_indirection_and_preserves_external_tree() {
 
         let settings = read_settings(&connection).expect("failed to read settings for fresh install");
         assert_eq!(settings.theme_id, "");
+        // Nothing is captured before the user has seen onboarding.
+        assert!(settings.is_paused);
     }
 
     #[test]

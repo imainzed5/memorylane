@@ -22,12 +22,13 @@ import { GalleryWorkspace } from "./components/workspaces/GalleryWorkspace";
 import { IntelligenceWorkspace } from "./components/workspaces/IntelligenceWorkspace";
 import { ReviewWorkspace } from "./components/workspaces/ReviewWorkspace";
 import { SettingsModal } from "./components/modals/SettingsModal";
-import { ConfirmationModal, KeyboardShortcutsModal, QuickStartModal, ThemeOnboardingModal } from "./components/modals/Dialogs";
+import { ConfirmationModal, KeyboardShortcutsModal } from "./components/modals/Dialogs";
+import { OnboardingModal, type OnboardingChoices } from "./components/modals/Onboarding";
 import { ContextMenuProvider, writeClipboardText, type CaptureMenuBuilder, type ContextMenuEntry } from "./components/ContextMenu";
 import { runViewTransition } from "./utils/motion";
 import { useArchiveSearch } from "./hooks/useArchiveSearch";
 import { useDayIntelligence } from "./hooks/useDayIntelligence";
-import { resolveThemeId, resolveSensitiveCaptureMode, parseListEditorText, listToEditorText, haveSameListValues, parseTagDraftInput, hasDismissedQuickStart, markQuickStartDismissed, themeName, dayKeyFromDate, dayDateFromKey, formatDaySecondary, formatViewerDate, formatCaptureTimestamp, isDayKey, formatCountdown, clampIntervalMinutes, fallbackDays, mergeCaptures, deriveContextBadge, dataUrlToPngBlob } from "./utils/app";
+import { resolveThemeId, resolveSensitiveCaptureMode, parseListEditorText, listToEditorText, haveSameListValues, parseTagDraftInput, dayKeyFromDate, dayDateFromKey, formatDaySecondary, formatViewerDate, formatCaptureTimestamp, isDayKey, formatCountdown, clampIntervalMinutes, fallbackDays, mergeCaptures, deriveContextBadge, dataUrlToPngBlob } from "./utils/app";
 
 import { ContentRevision, StaleContentError } from "./utils/contentRevision";
 import { acceptRecordingState } from "./utils/recordingState";
@@ -82,10 +83,9 @@ function App() {
   const [draftPauseWindowKeywordsText, setDraftPauseWindowKeywordsText] = useState<string>("");
   const [draftSensitiveWindowKeywordsText, setDraftSensitiveWindowKeywordsText] = useState<string>("");
   const [draftSensitiveCaptureMode, setDraftSensitiveCaptureMode] = useState<SensitiveCaptureMode>("skip");
-  const [isThemeOnboardingOpen, setIsThemeOnboardingOpen] = useState<boolean>(false);
+  const [isOnboardingOpen, setIsOnboardingOpen] = useState<boolean>(false);
   const [onboardingThemeId, setOnboardingThemeId] = useState<ThemeId>(ONBOARDING_THEME_ID);
-  const [isThemeOnboardingSaving, setIsThemeOnboardingSaving] = useState<boolean>(false);
-  const [isQuickStartOpen, setIsQuickStartOpen] = useState<boolean>(false);
+  const [isOnboardingSaving, setIsOnboardingSaving] = useState<boolean>(false);
   const [isShortcutGuideOpen, setIsShortcutGuideOpen] = useState<boolean>(false);
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("browse");
   const workspaceModeRef = useRef<WorkspaceMode>("browse");
@@ -261,7 +261,7 @@ function App() {
   const selectedDayKeyRef = useRef(selectedDayKey);
   const timelineThumbRefs = useRef<Record<number, HTMLButtonElement | null>>({});
   const searchInputRef = useRef<HTMLInputElement | null>(null);
-  const appliedThemeId = isThemeOnboardingOpen ? onboardingThemeId : themeId;
+  const appliedThemeId = isOnboardingOpen ? onboardingThemeId : themeId;
 
   useEffect(() => {
     selectedDayKeyRef.current = selectedDayKey;
@@ -516,7 +516,7 @@ function App() {
       setStartupOnBootSupported(settings.startupOnBootSupported);
       const trimmedTheme = settings.themeId.trim();
       const resolvedTheme = resolveThemeId(trimmedTheme);
-      const needsThemeOnboarding = trimmedTheme.length === 0;
+      const needsOnboarding = trimmedTheme.length === 0;
       const resolvedSensitiveMode = resolveSensitiveCaptureMode(settings.sensitiveCaptureMode);
       setThemeId(resolvedTheme);
       setExcludedProcesses(settings.excludedProcesses ?? []);
@@ -525,13 +525,8 @@ function App() {
       setPauseWindowKeywords(settings.pauseWindowKeywords ?? []);
       setSensitiveWindowKeywords(settings.sensitiveWindowKeywords ?? []);
       setSensitiveCaptureMode(resolvedSensitiveMode);
-      setOnboardingThemeId(needsThemeOnboarding ? ONBOARDING_THEME_ID : resolvedTheme);
-      setIsThemeOnboardingOpen(needsThemeOnboarding);
-      if (needsThemeOnboarding) {
-        setIsQuickStartOpen(false);
-      } else if (!hasDismissedQuickStart()) {
-        setIsQuickStartOpen(true);
-      }
+      setOnboardingThemeId(needsOnboarding ? ONBOARDING_THEME_ID : resolvedTheme);
+      setIsOnboardingOpen(needsOnboarding);
       setStorageStats(stats);
       setCaptureHealth(health);
       setPerformanceSnapshot(performance);
@@ -926,17 +921,6 @@ function App() {
       setActionMessage(String(error ?? "Capture request failed."));
     }
   }, [refreshAll]);
-
-  const dismissQuickStart = useCallback((options?: { openSettings?: boolean; openShortcuts?: boolean }) => {
-    markQuickStartDismissed();
-    setIsQuickStartOpen(false);
-    if (options?.openSettings) {
-      setIsSettingsOpen(true);
-    }
-    if (options?.openShortcuts) {
-      setIsShortcutGuideOpen(true);
-    }
-  }, []);
 
   const openBrowseWorkspace = useCallback(() => {
     switchWorkspace("browse");
@@ -1500,32 +1484,50 @@ function App() {
     startupOnBoot,
   ]);
 
-  const completeThemeOnboarding = useCallback(async () => {
-    if (isThemeOnboardingSaving) {
-      return;
-    }
-
-    setIsThemeOnboardingSaving(true);
-
-    try {
-      const updated = await invoke<SettingsPayload>("update_settings", {
-        themeId: onboardingThemeId,
-      });
-
-      const nextThemeId = resolveThemeId(updated.themeId);
-      setThemeId(nextThemeId);
-      setDraftThemeId(nextThemeId);
-      setIsThemeOnboardingOpen(false);
-      if (!hasDismissedQuickStart()) {
-        setIsQuickStartOpen(true);
+  const completeOnboarding = useCallback(
+    async (choices: OnboardingChoices, startRecording: boolean) => {
+      if (isOnboardingSaving) {
+        return;
       }
-      setActionMessage(`Theme set to ${themeName(nextThemeId)}.`);
-    } catch {
-      setActionMessage("Unable to save selected theme.");
-    } finally {
-      setIsThemeOnboardingSaving(false);
-    }
-  }, [isThemeOnboardingSaving, onboardingThemeId]);
+
+      setIsOnboardingSaving(true);
+
+      try {
+        // Saving a theme is what marks onboarding as done (an empty theme reopens it).
+        const updated = await invoke<SettingsPayload>("update_settings", {
+          themeId: onboardingThemeId,
+          intervalMinutes: clampIntervalMinutes(choices.intervalMinutes),
+          retentionDays: choices.retentionDays,
+          excludedProcesses: choices.excludedProcesses,
+          sensitiveWindowKeywords: choices.sensitiveWindowKeywords,
+          sensitiveCaptureMode: choices.sensitiveCaptureMode,
+        });
+
+        const nextThemeId = resolveThemeId(updated.themeId);
+        setThemeId(nextThemeId);
+        setDraftThemeId(nextThemeId);
+        setRetentionDays(updated.retentionDays);
+        setExcludedProcesses(updated.excludedProcesses ?? []);
+        setSensitiveWindowKeywords(updated.sensitiveWindowKeywords ?? []);
+        setSensitiveCaptureMode(resolveSensitiveCaptureMode(updated.sensitiveCaptureMode));
+        if (startRecording) {
+          applyRecordingState(await invoke<RecordingStatePayload>("set_pause_state", { isPaused: false }));
+        }
+        setIsOnboardingOpen(false);
+        await refreshAll(selectedDayKeyRef.current);
+        setActionMessage(
+          startRecording
+            ? `Recording started. MemoryLane captures every ${updated.intervalMinutes} min.`
+            : "Setup saved. Recording is paused until you press P.",
+        );
+      } catch {
+        setActionMessage("Unable to save your setup.");
+      } finally {
+        setIsOnboardingSaving(false);
+      }
+    },
+    [applyRecordingState, isOnboardingSaving, onboardingThemeId, refreshAll, setActionMessage],
+  );
 
   const saveSettingsFromModal = useCallback(async () => {
     const didSave = await persistSettings();
@@ -1797,8 +1799,7 @@ function App() {
       }
 
       const isModalOpen =
-        isThemeOnboardingOpen ||
-        isQuickStartOpen ||
+        isOnboardingOpen ||
         isShortcutGuideOpen ||
         isSettingsOpen ||
         pendingRedactionCaptureId !== null ||
@@ -1818,7 +1819,7 @@ function App() {
         return;
       }
 
-      if (isThemeOnboardingOpen) {
+      if (isOnboardingOpen) {
         return;
       }
 
@@ -1828,14 +1829,6 @@ function App() {
           setPendingRedactionCaptureId(null);
           setPendingDeleteCapture(null);
           setPendingDeleteDayKey(null);
-        }
-        return;
-      }
-
-      if (isQuickStartOpen) {
-        if (event.key === "Escape") {
-          event.preventDefault();
-          dismissQuickStart();
         }
         return;
       }
@@ -2059,10 +2052,8 @@ function App() {
     openReviewWorkspace,
     shiftCapture,
     shiftDay,
-    dismissQuickStart,
-    isQuickStartOpen,
     isShortcutGuideOpen,
-    isThemeOnboardingOpen,
+    isOnboardingOpen,
     isSettingsOpen,
     pendingDeleteCapture,
     pendingDeleteDayKey,
@@ -2401,30 +2392,26 @@ function App() {
         />
       ) : null}
 
-      {isThemeOnboardingOpen ? (
-        <ThemeOnboardingModal
-          isSaving={isThemeOnboardingSaving}
-          selectedThemeId={onboardingThemeId}
-          themeOptions={THEME_OPTIONS.filter((option) => option.id !== LEGACY_THEME_ID)}
-          onSelectTheme={setOnboardingThemeId}
-          onConfirm={() => void completeThemeOnboarding()}
-        />
-      ) : null}
-
-      {!isThemeOnboardingOpen && isQuickStartOpen ? (
-        <QuickStartModal
-          intervalMinutes={intervalMinutes}
-          onCaptureNow={() => {
-            dismissQuickStart();
-            void triggerCaptureNow();
+      {isOnboardingOpen ? (
+        <OnboardingModal
+          initialChoices={{
+            excludedProcesses,
+            sensitiveWindowKeywords,
+            sensitiveCaptureMode,
+            intervalMinutes,
+            retentionDays,
           }}
-          onClose={() => dismissQuickStart()}
-          onOpenSettings={() => dismissQuickStart({ openSettings: true })}
-          onOpenShortcuts={() => dismissQuickStart({ openShortcuts: true })}
+          isSaving={isOnboardingSaving}
+          ocrHealth={ocrHealth}
+          selectedThemeId={onboardingThemeId}
+          storagePath={storagePath}
+          themeOptions={THEME_OPTIONS.filter((option) => option.id !== LEGACY_THEME_ID)}
+          onFinish={(choices, startRecording) => void completeOnboarding(choices, startRecording)}
+          onSelectTheme={setOnboardingThemeId}
         />
       ) : null}
 
-      {!isThemeOnboardingOpen && !isQuickStartOpen && isShortcutGuideOpen ? (
+      {!isOnboardingOpen && isShortcutGuideOpen ? (
         <KeyboardShortcutsModal
           onClose={() => setIsShortcutGuideOpen(false)}
           onOpenSettings={() => {

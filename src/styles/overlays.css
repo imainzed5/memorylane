@@ -100,6 +100,230 @@
   height: min(86vh, 780px);
 }
 
+/* --- Onboarding ------------------------------------------------------------------ */
+
+/* Fixed height so the sheet does not jump between steps. */
+.onboarding-sheet {
+  width: min(620px, 100%);
+  height: min(660px, 88vh);
+}
+
+.onboarding-head {
+  padding-bottom: var(--space-2);
+}
+
+.onboarding-steps {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  list-style: none;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text-3);
+}
+
+.onboarding-steps li {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.onboarding-steps li + li::before {
+  content: "";
+  width: 20px;
+  height: 1px;
+  background: var(--separator-strong);
+}
+
+.onboarding-steps li.is-current {
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.onboarding-steps li.is-done {
+  color: var(--text-2);
+}
+
+.onboarding-step-dot {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  background: var(--fill-2);
+  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+
+.is-current > .onboarding-step-dot {
+  color: var(--on-accent);
+  background: var(--accent);
+}
+
+.is-done > .onboarding-step-dot {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.onboarding-body {
+  overflow-x: hidden;
+}
+
+.onboarding-step {
+  display: grid;
+  align-content: start;
+  gap: var(--space-5);
+}
+
+.onboarding-step.slide-next {
+  animation: month-in-next var(--dur-base) var(--ease-out);
+}
+
+.onboarding-step.slide-previous {
+  animation: month-in-previous var(--dur-base) var(--ease-out);
+}
+
+.onboarding-intro h2 {
+  font-size: var(--text-xl);
+  font-weight: 650;
+  letter-spacing: var(--tracking-tight);
+  outline: none;
+}
+
+.onboarding-intro p {
+  margin-top: var(--space-1);
+  font-size: var(--text-base);
+  line-height: 1.55;
+  color: var(--text-2);
+}
+
+.onboarding-facts {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.onboarding-fact {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-radius: var(--r-md);
+  background: var(--fill-1);
+}
+
+.onboarding-fact-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--r-sm);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.onboarding-fact h3 {
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+
+.onboarding-fact p {
+  margin-top: 2px;
+  font-size: var(--text-base);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+.onboarding-fact code {
+  padding: 1px 4px;
+  border-radius: var(--r-xs);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  word-break: break-all;
+  background: var(--fill-2);
+}
+
+.onboarding-note,
+.onboarding-tips {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  line-height: 1.7;
+  color: var(--text-2);
+}
+
+.onboarding-note .lucide-icon {
+  color: var(--success);
+}
+
+.onboarding-section {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.onboarding-sheet .chip {
+  gap: 5px;
+}
+
+.onboarding-add {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.onboarding-add input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.onboarding-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: var(--space-5);
+}
+
+/* All four themes on one row so the OCR status and tips stay in view. */
+.onboarding-sheet .theme-grid {
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: var(--space-2);
+}
+
+.onboarding-sheet .theme-card-copy span {
+  display: none;
+}
+
+.onboarding-status {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--r-md);
+  background: var(--fill-1);
+}
+
+.onboarding-status .lucide-icon {
+  flex: none;
+  margin-top: 1px;
+  color: var(--accent);
+}
+
+.onboarding-status.is-ready .lucide-icon {
+  color: var(--success);
+}
+
+.onboarding-status p {
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  color: var(--text-2);
+}
+
+.onboarding-status strong {
+  font-weight: 600;
+  color: var(--text-1);
+}
+
 .shortcuts-sheet {
   width: min(760px, 100%);
 }

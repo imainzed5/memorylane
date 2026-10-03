@@ -591,7 +591,7 @@ fn initialize_database_v1(conn: &Connection) -> Result<(), String> {
             sensitive_window_keywords,
             sensitive_capture_mode
         )
-        VALUES (1, ?, ?, ?, 0, 0, '', '[]', '[]', '[]', '[]', '[]', 'skip')
+        VALUES (1, ?, ?, ?, 1, 0, '', '[]', '[]', '[]', '[]', '[]', 'skip')
         ON CONFLICT(id) DO NOTHING
         ",
         params![
