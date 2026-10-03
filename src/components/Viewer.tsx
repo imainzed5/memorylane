@@ -16,8 +16,10 @@ import type { CaptureHealthPayload, CaptureRecord } from "../types";
 import { ICON_SIZE, ICON_STROKE_WIDTH } from "../constants";
 import { formatCaptureTimestamp, formatViewerDate } from "../utils/app";
 import { Kbd, useDismiss } from "./primitives";
+import { useContextMenu, type CaptureMenuBuilder } from "./ContextMenu";
 
 type ViewerProps = {
+  buildCaptureMenu: CaptureMenuBuilder;
   captureHealth: CaptureHealthPayload;
   captures: CaptureRecord[];
   compareCaptureLabel: string | null;
@@ -45,6 +47,7 @@ type ViewerProps = {
 };
 
 export function Viewer({
+  buildCaptureMenu,
   captureHealth,
   captures,
   compareCaptureLabel,
@@ -71,6 +74,7 @@ export function Viewer({
   onToggleFavorite,
 }: ViewerProps) {
   const imageRef = useRef<HTMLImageElement | null>(null);
+  const openContextMenu = useContextMenu();
   const hasCompareAnchor = Boolean(compareCaptureLabel);
   const healthWarning =
     captureHealth.consecutiveFailures > 0 && captureHealth.lastError
@@ -120,6 +124,12 @@ export function Viewer({
   const appLabel = selectedCapture.processName.trim() || "Unknown app";
   const windowLabel = selectedCapture.windowTitle.trim();
   const ratioStyle = { "--ratio": captureAspectRatio(selectedCapture) } as React.CSSProperties;
+  const openCaptureMenu = (event: React.MouseEvent<HTMLImageElement>) =>
+    openContextMenu(
+      event,
+      buildCaptureMenu(selectedCapture, { surface: "viewer", source: event.currentTarget }),
+      `Capture at ${selectedCapture.timestampLabel}`,
+    );
 
   return (
     <main className="stage" data-workspace-pane>
@@ -162,6 +172,7 @@ export function Viewer({
                 className={isPlaceholder ? "stage-image is-placeholder" : "stage-image"}
                 src={displayedImage}
                 alt={`Screenshot captured at ${selectedCapture.timestampLabel}`}
+                onContextMenu={openCaptureMenu}
               />
             </figure>
           </div>
@@ -175,6 +186,7 @@ export function Viewer({
             style={ratioStyle}
             data-hero="viewer"
             onDoubleClick={() => onOpenQuickLook(imageRef.current)}
+            onContextMenu={openCaptureMenu}
           />
         )}
 

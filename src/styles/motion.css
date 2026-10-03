@@ -91,6 +91,14 @@
   }
 }
 
+/* Context menus grow from the corner nearest the pointer (transform-origin set inline). */
+@keyframes context-menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
 /* Popovers that open upward grow from below instead. */
 .filter-popover,
 .info-popover {

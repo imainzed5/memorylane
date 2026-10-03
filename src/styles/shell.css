@@ -497,13 +497,16 @@
   color: var(--text-2);
 }
 
-.menu-item:hover:not(:disabled) {
+.menu-item:not(.menu-item-roving):hover:not(:disabled),
+.menu-item.is-active:not(:disabled) {
   color: var(--on-accent);
   background: var(--accent);
 }
 
-.menu-item:hover:not(:disabled) .lucide-icon,
-.menu-item:hover:not(:disabled) .kbd {
+.menu-item:not(.menu-item-roving):hover:not(:disabled) .lucide-icon,
+.menu-item:not(.menu-item-roving):hover:not(:disabled) .kbd,
+.menu-item.is-active:not(:disabled) .lucide-icon,
+.menu-item.is-active:not(:disabled) .kbd {
   color: inherit;
   background: transparent;
   box-shadow: none;
@@ -518,7 +521,8 @@
   color: var(--danger);
 }
 
-.menu-item-danger:hover:not(:disabled) {
+.menu-item-danger:not(.menu-item-roving):hover:not(:disabled),
+.menu-item-danger.is-active:not(:disabled) {
   color: #fff;
   background: var(--danger);
 }

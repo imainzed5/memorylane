@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { Bookmark, BookmarkX, Eye, FolderSearch, Image as ImageIcon, Link, Maximize2, Star, StarOff, Trash2 } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "@fontsource/geist-sans/400.css";
@@ -22,10 +23,11 @@ import { IntelligenceWorkspace } from "./components/workspaces/IntelligenceWorks
 import { ReviewWorkspace } from "./components/workspaces/ReviewWorkspace";
 import { SettingsModal } from "./components/modals/SettingsModal";
 import { ConfirmationModal, KeyboardShortcutsModal, QuickStartModal, ThemeOnboardingModal } from "./components/modals/Dialogs";
+import { ContextMenuProvider, writeClipboardText, type CaptureMenuBuilder, type ContextMenuEntry } from "./components/ContextMenu";
 import { runViewTransition } from "./utils/motion";
 import { useArchiveSearch } from "./hooks/useArchiveSearch";
 import { useDayIntelligence } from "./hooks/useDayIntelligence";
-import { resolveThemeId, resolveSensitiveCaptureMode, parseListEditorText, listToEditorText, haveSameListValues, parseTagDraftInput, hasDismissedQuickStart, markQuickStartDismissed, themeName, dayKeyFromDate, dayDateFromKey, formatDaySecondary, formatViewerDate, formatCaptureTimestamp, isDayKey, formatCountdown, clampIntervalMinutes, fallbackDays, mergeCaptures, deriveContextBadge } from "./utils/app";
+import { resolveThemeId, resolveSensitiveCaptureMode, parseListEditorText, listToEditorText, haveSameListValues, parseTagDraftInput, hasDismissedQuickStart, markQuickStartDismissed, themeName, dayKeyFromDate, dayDateFromKey, formatDaySecondary, formatViewerDate, formatCaptureTimestamp, isDayKey, formatCountdown, clampIntervalMinutes, fallbackDays, mergeCaptures, deriveContextBadge, dataUrlToPngBlob } from "./utils/app";
 
 import { ContentRevision, StaleContentError } from "./utils/contentRevision";
 import { acceptRecordingState } from "./utils/recordingState";
@@ -193,7 +195,7 @@ function App() {
   const [noteSaveState, setNoteSaveState] = useState<NoteSaveState>("idle");
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [pendingRedactionCaptureId, setPendingRedactionCaptureId] = useState<number | null>(null);
-  const [pendingDeleteCaptureId, setPendingDeleteCaptureId] = useState<number | null>(null);
+  const [pendingDeleteCapture, setPendingDeleteCapture] = useState<Pick<CaptureRecord, "id" | "timestampLabel"> | null>(null);
   const [pendingDeleteDayKey, setPendingDeleteDayKey] = useState<string | null>(null);
   const [isWindowMaximized, setIsWindowMaximized] = useState<boolean>(false);
   const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
@@ -1067,8 +1069,13 @@ function App() {
   }, []);
 
   const updateCaptureReviewState = useCallback(
-    async (options: { isBookmarked?: boolean; isFavorite?: boolean; tags?: string[] }, successMessage: string) => {
-      if (!selectedCapture) {
+    async (
+      options: { isBookmarked?: boolean; isFavorite?: boolean; tags?: string[] },
+      successMessage: string,
+      target: CaptureRecord | null = selectedCapture,
+      onChange?: (patch: Partial<CaptureRecord>) => void,
+    ) => {
+      if (!target) {
         return;
       }
 
@@ -1076,7 +1083,7 @@ function App() {
       setIsReviewBusy(true);
       try {
         const payload = await invoke<CaptureReviewPayload>("set_capture_review_state", {
-          captureId: selectedCapture.id,
+          captureId: target.id,
           isBookmarked: options.isBookmarked,
           isFavorite: options.isFavorite,
           tags: options.tags,
@@ -1095,7 +1102,10 @@ function App() {
               : capture,
           ),
         );
-        setTagDraft(payload.tags.join(", "));
+        onChange?.({ isBookmarked: payload.isBookmarked, isFavorite: payload.isFavorite, tags: payload.tags });
+        if (payload.captureId === selectedCapture?.id) {
+          setTagDraft(payload.tags.join(", "));
+        }
         await refreshReviewShortcuts();
         setActionMessage(successMessage);
       } catch {
@@ -1585,68 +1595,200 @@ function App() {
     }
   }, [selectedCapture]);
 
+  const requestDeleteCapture = useCallback((capture: Pick<CaptureRecord, "id" | "timestampLabel">) => {
+    setPendingDeleteCapture({ id: capture.id, timestampLabel: capture.timestampLabel });
+  }, []);
+
   const deleteSelectedCapture = useCallback(async () => {
     if (!selectedCapture) {
       return;
     }
 
-    setPendingDeleteCaptureId(selectedCapture.id);
-  }, [selectedCapture]);
+    requestDeleteCapture(selectedCapture);
+  }, [requestDeleteCapture, selectedCapture]);
 
-  const confirmDeleteSelectedCapture = useCallback(async () => {
-    if (!selectedCapture || pendingDeleteCaptureId !== selectedCapture.id) {
-      setPendingDeleteCaptureId(null);
+  const confirmDeleteCapture = useCallback(async () => {
+    const target = pendingDeleteCapture;
+    setPendingDeleteCapture(null);
+    if (!target) {
       return;
     }
 
-    setPendingDeleteCaptureId(null);
     try {
       const payload = await invoke<DeleteCapturePayload>("delete_capture", {
-        captureId: selectedCapture.id,
+        captureId: target.id,
       });
       invalidateContent();
-      if (compareCaptureRef?.captureId === selectedCapture.id) {
+      if (compareCaptureRef?.captureId === target.id) {
         clearCompareAnchor();
       }
-      await refreshAll(payload.dayKey);
+      await refreshAll(selectedDayKeyRef.current);
       setActionMessage(`Deleted capture and ${payload.removedFiles} file(s) from ${formatDaySecondary(payload.dayKey)}.`);
     } catch {
       setActionMessage("Delete capture action failed.");
     }
-  }, [invalidateContent, clearCompareAnchor, compareCaptureRef?.captureId, pendingDeleteCaptureId, refreshAll, selectedCapture]);
+  }, [invalidateContent, clearCompareAnchor, compareCaptureRef?.captureId, pendingDeleteCapture, refreshAll]);
 
-  const deleteSelectedDay = useCallback(async () => {
-    if (selectedDaySummary.captureCount === 0) {
+  const requestDeleteDay = useCallback((dayKey: string) => {
+    const count = daySummaries.find((summary) => summary.dayKey === dayKey)?.captureCount ?? 0;
+    if (count === 0) {
       setActionMessage("There are no captures to delete for this day.");
       return;
     }
 
-    setPendingDeleteDayKey(selectedDaySummary.dayKey);
-  }, [selectedDaySummary.captureCount, selectedDaySummary.dayKey]);
+    setPendingDeleteDayKey(dayKey);
+  }, [daySummaries]);
 
-  const confirmDeleteSelectedDay = useCallback(async () => {
-    if (selectedDaySummary.captureCount === 0 || pendingDeleteDayKey !== selectedDaySummary.dayKey) {
-      setPendingDeleteDayKey(null);
+  const deleteSelectedDay = useCallback(async () => {
+    requestDeleteDay(selectedDaySummary.dayKey);
+  }, [requestDeleteDay, selectedDaySummary.dayKey]);
+
+  const confirmDeleteDay = useCallback(async () => {
+    const dayKey = pendingDeleteDayKey;
+    setPendingDeleteDayKey(null);
+    if (!dayKey) {
       return;
     }
 
-    setPendingDeleteDayKey(null);
     try {
-      const payload = await invoke<DeleteDayPayload>("delete_day", {
-        dayKey: selectedDaySummary.dayKey,
-      });
+      const payload = await invoke<DeleteDayPayload>("delete_day", { dayKey });
       invalidateContent();
       if (compareCaptureRef?.dayKey === payload.dayKey) {
         clearCompareAnchor();
       }
-      await refreshAll(todayKey);
+      await refreshAll(payload.dayKey === selectedDayKeyRef.current ? todayKey : selectedDayKeyRef.current);
       setActionMessage(
         `Deleted ${payload.removedRows} captures and ${payload.removedFiles} files from ${formatViewerDate(payload.dayKey)}.`,
       );
     } catch {
       setActionMessage("Delete day action failed.");
     }
-  }, [invalidateContent, clearCompareAnchor, compareCaptureRef?.dayKey, pendingDeleteDayKey, refreshAll, selectedDaySummary, todayKey]);
+  }, [invalidateContent, clearCompareAnchor, compareCaptureRef?.dayKey, pendingDeleteDayKey, refreshAll, todayKey]);
+
+  const quickLookCapture = useCallback(
+    async (capture: CaptureRecord, source: HTMLElement | null) => {
+      const heroOptions = { heroSource: source, heroTargetSelector: '[data-hero="quicklook"]' };
+      if (filteredCaptures.some((candidate) => candidate.id === capture.id)) {
+        runViewTransition(() => {
+          setSelectedCaptureId(capture.id);
+          setIsQuickLookOpen(true);
+        }, heroOptions);
+        return;
+      }
+
+      // Captures outside the loaded day (gallery): load that day underneath, then peek.
+      const revision = contentRevision.current();
+      const payload = await fetchCaptureContext(capture.id);
+      if (!payload || !contentRevision.isCurrent(revision)) {
+        setActionMessage("Unable to open capture.");
+        return;
+      }
+      runViewTransition(() => {
+        applyCaptureContext(payload);
+        setIsQuickLookOpen(true);
+      }, heroOptions);
+    },
+    [applyCaptureContext, contentRevision, fetchCaptureContext, filteredCaptures, setActionMessage],
+  );
+
+  const copyCaptureImage = useCallback(async (capture: CaptureRecord) => {
+    try {
+      // Hand the clipboard a pending blob so the write still counts as part of the click.
+      const png = invoke<CaptureImagePayload>("get_capture_image", { captureId: capture.id }).then((payload) =>
+        dataUrlToPngBlob(payload.imageDataUrl),
+      );
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
+      setActionMessage("Copied image to the clipboard.");
+    } catch {
+      setActionMessage("Unable to copy this capture's image.");
+    }
+  }, [setActionMessage]);
+
+  const copyCapturePath = useCallback(async (capture: CaptureRecord) => {
+    try {
+      await writeClipboardText(capture.imagePath);
+      setActionMessage("Copied screenshot path.");
+    } catch {
+      setActionMessage("Unable to copy path from this runtime.");
+    }
+  }, [setActionMessage]);
+
+  const revealCaptureInExplorer = useCallback(async (capture: CaptureRecord) => {
+    try {
+      await invoke("reveal_capture_in_explorer", { captureId: capture.id });
+    } catch (error) {
+      setActionMessage(String(error ?? "Unable to show this capture in Explorer."));
+    }
+  }, [setActionMessage]);
+
+  const buildCaptureMenu = useCallback<CaptureMenuBuilder>(
+    (capture, { surface, source, onChange }) => {
+      // Shortcut hints only hold for the selected capture; elsewhere they would mislead.
+      // The filmstrip selects the thumb it was opened on, so its hints always apply.
+      const isSelected = surface === "filmstrip" || (surface !== "gallery" && capture.id === selectedCaptureId);
+      const hint = (keys: string) => (isSelected ? keys : undefined);
+      const entries: ContextMenuEntry[] = [];
+      if (surface === "gallery" || surface === "review") {
+        entries.push({
+          id: "open",
+          label: "Open in Timeline",
+          icon: Maximize2,
+          onSelect: () => (surface === "gallery" ? void jumpToGalleryCapture(capture.id, source) : switchWorkspace("browse")),
+        });
+      }
+      entries.push(
+        { id: "quick-look", label: "Quick Look", icon: Eye, shortcut: hint("Space"), onSelect: () => void quickLookCapture(capture, source) },
+        { id: "sep-copy", separator: true },
+        { id: "copy-image", label: "Copy Image", icon: ImageIcon, onSelect: () => void copyCaptureImage(capture) },
+        { id: "copy-path", label: "Copy File Path", icon: Link, onSelect: () => void copyCapturePath(capture) },
+        { id: "reveal", label: "Show in Explorer", icon: FolderSearch, onSelect: () => void revealCaptureInExplorer(capture) },
+        { id: "sep-review", separator: true },
+        {
+          id: "bookmark",
+          label: capture.isBookmarked ? "Remove Bookmark" : "Bookmark",
+          icon: capture.isBookmarked ? BookmarkX : Bookmark,
+          shortcut: hint("B"),
+          disabled: isReviewBusy,
+          onSelect: () =>
+            void updateCaptureReviewState(
+              { isBookmarked: !capture.isBookmarked },
+              capture.isBookmarked ? "Bookmark removed." : "Capture bookmarked.",
+              capture,
+              onChange,
+            ),
+        },
+        {
+          id: "favorite",
+          label: capture.isFavorite ? "Remove Favorite" : "Favorite",
+          icon: capture.isFavorite ? StarOff : Star,
+          shortcut: hint("F"),
+          disabled: isReviewBusy,
+          onSelect: () =>
+            void updateCaptureReviewState(
+              { isFavorite: !capture.isFavorite },
+              capture.isFavorite ? "Favorite removed." : "Capture favorited.",
+              capture,
+              onChange,
+            ),
+        },
+        { id: "sep-delete", separator: true },
+        { id: "delete", label: "Delete Capture…", icon: Trash2, shortcut: hint("Del"), danger: true, onSelect: () => requestDeleteCapture(capture) },
+      );
+      return entries;
+    },
+    [
+      copyCaptureImage,
+      copyCapturePath,
+      isReviewBusy,
+      jumpToGalleryCapture,
+      quickLookCapture,
+      requestDeleteCapture,
+      revealCaptureInExplorer,
+      selectedCaptureId,
+      switchWorkspace,
+      updateCaptureReviewState,
+    ],
+  );
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1660,7 +1802,7 @@ function App() {
         isShortcutGuideOpen ||
         isSettingsOpen ||
         pendingRedactionCaptureId !== null ||
-        pendingDeleteCaptureId !== null ||
+        pendingDeleteCapture !== null ||
         pendingDeleteDayKey !== null;
 
       if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "k") {
@@ -1680,11 +1822,11 @@ function App() {
         return;
       }
 
-      if (pendingRedactionCaptureId !== null || pendingDeleteCaptureId !== null || pendingDeleteDayKey !== null) {
+      if (pendingRedactionCaptureId !== null || pendingDeleteCapture !== null || pendingDeleteDayKey !== null) {
         if (event.key === "Escape") {
           event.preventDefault();
           setPendingRedactionCaptureId(null);
-          setPendingDeleteCaptureId(null);
+          setPendingDeleteCapture(null);
           setPendingDeleteDayKey(null);
         }
         return;
@@ -1922,7 +2064,7 @@ function App() {
     isShortcutGuideOpen,
     isThemeOnboardingOpen,
     isSettingsOpen,
-    pendingDeleteCaptureId,
+    pendingDeleteCapture,
     pendingDeleteDayKey,
     pendingRedactionCaptureId,
     retrievalResults.length,
@@ -1941,6 +2083,7 @@ function App() {
   const noteDirty = selectedCapture ? noteDraft !== selectedCapture.captureNote : false;
   const pendingDeleteDayLabel =
     pendingDeleteDayKey !== null ? formatViewerDate(pendingDeleteDayKey) : formatViewerDate(selectedDaySummary.dayKey);
+  const pendingDeleteDayCount = daySummaries.find((summary) => summary.dayKey === pendingDeleteDayKey)?.captureCount ?? 0;
   const compareCaptureLabel =
     compareCaptureRef && compareCaptureRef.captureId !== selectedCapture?.id
       ? `${formatViewerDate(compareCaptureRef.dayKey)} · ${compareCaptureRef.timestampLabel}`
@@ -1993,6 +2136,7 @@ function App() {
   const clearSearch = () => setCaptureSearchQuery("");
 
   return (
+    <ContextMenuProvider onMessage={setActionMessage}>
     <div className="memorylane-root">
       <div className={isInspectorOpen ? "app-shell" : "app-shell inspector-collapsed"}>
         <Sidebar
@@ -2065,6 +2209,7 @@ function App() {
 
             {workspaceMode === "browse" ? (
               <Viewer
+                buildCaptureMenu={buildCaptureMenu}
                 captureHealth={captureHealth}
                 captures={filteredCaptures}
                 compareCaptureLabel={compareCaptureLabel}
@@ -2094,6 +2239,7 @@ function App() {
 
             {workspaceMode === "review" ? (
               <ReviewWorkspace
+                buildCaptureMenu={buildCaptureMenu}
                 compareCaptureLabel={compareCaptureLabel}
                 isReviewBusy={isReviewBusy}
                 noteDirty={noteDirty}
@@ -2132,15 +2278,16 @@ function App() {
             ) : null}
 
             {workspaceMode === "all-captures" ? (
-              <GalleryWorkspace key={libraryRevision} onSelectCapture={(captureId, source) => void jumpToGalleryCapture(captureId, source)} />
+              <GalleryWorkspace key={libraryRevision} buildCaptureMenu={buildCaptureMenu} onSelectCapture={(captureId, source) => void jumpToGalleryCapture(captureId, source)} />
             ) : null}
 
             {workspaceMode === "calendar" ? (
-              <CalendarWorkspace daySummaries={daySummaries} selectedDayKey={selectedDayKey} todayKey={todayKey} onSelectDay={jumpToCalendarDay} />
+              <CalendarWorkspace daySummaries={daySummaries} selectedDayKey={selectedDayKey} todayKey={todayKey} onDeleteDay={requestDeleteDay} onSelectDay={jumpToCalendarDay} />
             ) : null}
 
             {showFilmstrip ? (
               <Filmstrip
+                buildCaptureMenu={buildCaptureMenu}
                 captures={filteredCaptures}
                 hasNewerPages={hasNewerPages}
                 hasOlderPages={hasOlderPages}
@@ -2298,12 +2445,12 @@ function App() {
         />
       ) : null}
 
-      {pendingDeleteCaptureId !== null && selectedCapture && pendingDeleteCaptureId === selectedCapture.id ? (
+      {pendingDeleteCapture !== null ? (
         <ConfirmationModal
-          title={`Delete the capture from ${selectedCapture.timestampLabel}?`}
+          title={`Delete the capture from ${pendingDeleteCapture.timestampLabel}?`}
           confirmLabel="Delete"
-          onClose={() => setPendingDeleteCaptureId(null)}
-          onConfirm={() => void confirmDeleteSelectedCapture()}
+          onClose={() => setPendingDeleteCapture(null)}
+          onConfirm={() => void confirmDeleteCapture()}
           body={<p>The screenshot and its thumbnail are removed from disk. This can't be undone.</p>}
         />
       ) : null}
@@ -2313,8 +2460,8 @@ function App() {
           title={`Delete every capture from ${pendingDeleteDayLabel}?`}
           confirmLabel="Delete Day"
           onClose={() => setPendingDeleteDayKey(null)}
-          onConfirm={() => void confirmDeleteSelectedDay()}
-          body={<p>All {selectedDaySummary.captureCount} captures from this day are removed from disk. This can't be undone.</p>}
+          onConfirm={() => void confirmDeleteDay()}
+          body={<p>All {pendingDeleteDayCount} captures from this day are removed from disk. This can't be undone.</p>}
         />
       ) : null}
 
@@ -2331,6 +2478,7 @@ function App() {
         </div>
       ) : null}
     </div>
+    </ContextMenuProvider>
   );
 }
 

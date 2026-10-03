@@ -353,3 +353,21 @@ export function renderHighlightedSnippet(snippet: string, highlightTerms: string
 
   return <>{segments}</>;
 }
+
+/** Re-encodes an image data URL as a PNG blob, the only image type the async clipboard accepts. */
+export async function dataUrlToPngBlob(dataUrl: string): Promise<Blob> {
+  const image = new Image();
+  image.src = dataUrl;
+  await image.decode();
+  const canvas = document.createElement("canvas");
+  canvas.width = image.naturalWidth;
+  canvas.height = image.naturalHeight;
+  const context = canvas.getContext("2d");
+  if (!context) {
+    throw new Error("Canvas is unavailable.");
+  }
+  context.drawImage(image, 0, 0);
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("PNG encoding failed."))), "image/png");
+  });
+}

@@ -97,6 +97,9 @@ New backend commands: add the fn in `backend.rs`, register it in `generate_handl
   Switch workspaces through `switchWorkspace(...)` in `App.tsx`, never `setWorkspaceMode` directly.
 - Reuse the primitives in `components/primitives.tsx`: `SegmentedControl` (sliding indicator),
   `useSlidingIndicator`, `useDismiss` (outside-click + Escape), `WorkspaceHeader`, `Kbd`.
+- Right-click menus go through `useContextMenu` (`components/ContextMenu.tsx`); capture menus come
+  from `buildCaptureMenu` in `App.tsx` so every surface offers the same actions. The provider
+  suppresses the WebView menu everywhere else (Shift + right-click keeps it in dev builds).
 - Transient feedback goes through `setActionMessage` (auto-dismissing toast). Don't add
   persistent status bars.
 - UI copy uses Title Case for buttons and menu items, and sentence case for descriptions.

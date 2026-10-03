@@ -3,15 +3,18 @@ import { invoke } from "@tauri-apps/api/core";
 import { Star } from "lucide-react";
 import type { CaptureRecord } from "../../types";
 import { dayKeyFromDate, formatViewerDate } from "../../utils/app";
+import { useContextMenu, type CaptureMenuBuilder } from "../ContextMenu";
 import { WorkspaceHeader } from "../primitives";
 
 type GalleryWorkspaceProps = {
+  buildCaptureMenu: CaptureMenuBuilder;
   onSelectCapture: (captureId: number, source: HTMLElement | null) => void;
 };
 
 const PAGE_SIZE = 60;
 
-export function GalleryWorkspace({ onSelectCapture }: GalleryWorkspaceProps) {
+export function GalleryWorkspace({ buildCaptureMenu, onSelectCapture }: GalleryWorkspaceProps) {
+  const openContextMenu = useContextMenu();
   const [captures, setCaptures] = useState<CaptureRecord[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
@@ -108,6 +111,18 @@ export function GalleryWorkspace({ onSelectCapture }: GalleryWorkspaceProps) {
                   className="gallery-tile"
                   type="button"
                   onClick={(event) => onSelectCapture(capture.id, event.currentTarget.querySelector("img"))}
+                  onContextMenu={(event) =>
+                    openContextMenu(
+                      event,
+                      buildCaptureMenu(capture, {
+                        surface: "gallery",
+                        source: event.currentTarget.querySelector("img"),
+                        onChange: (patch) =>
+                          setCaptures((current) => current.map((item) => (item.id === capture.id ? { ...item, ...patch } : item))),
+                      }),
+                      `Capture at ${capture.timestampLabel}`,
+                    )
+                  }
                   title={capture.windowTitle || capture.processName || capture.timestampLabel}
                 >
                   <span className="gallery-tile-frame">

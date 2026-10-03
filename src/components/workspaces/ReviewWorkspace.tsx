@@ -2,9 +2,11 @@ import { Bookmark, Layers3, Shield, Star } from "lucide-react";
 import type { CaptureRecord, NoteSaveState, ReviewShortcutCapture, ReviewShortcutsPayload } from "../../types";
 import { ICON_STROKE_WIDTH } from "../../constants";
 import { formatViewerDate } from "../../utils/app";
+import { useContextMenu, type CaptureMenuBuilder } from "../ContextMenu";
 import { WorkspaceHeader } from "../primitives";
 
 type ReviewWorkspaceProps = {
+  buildCaptureMenu: CaptureMenuBuilder;
   compareCaptureLabel: string | null;
   isReviewBusy: boolean;
   noteDirty: boolean;
@@ -28,6 +30,7 @@ type ReviewWorkspaceProps = {
 };
 
 export function ReviewWorkspace({
+  buildCaptureMenu,
   compareCaptureLabel,
   isReviewBusy,
   noteDirty,
@@ -49,6 +52,7 @@ export function ReviewWorkspace({
   onToggleBookmark,
   onToggleFavorite,
 }: ReviewWorkspaceProps) {
+  const openContextMenu = useContextMenu();
   const noteStatus =
     noteSaveState === "saving"
       ? "Saving…"
@@ -78,7 +82,19 @@ export function ReviewWorkspace({
                 </p>
               </div>
               {selectedCapture ? (
-                <img className="review-thumb" src={selectedCapture.thumbnailDataUrl} alt="" draggable={false} />
+                <img
+                  className="review-thumb"
+                  src={selectedCapture.thumbnailDataUrl}
+                  alt=""
+                  draggable={false}
+                  onContextMenu={(event) =>
+                    openContextMenu(
+                      event,
+                      buildCaptureMenu(selectedCapture, { surface: "review", source: event.currentTarget }),
+                      `Capture at ${selectedCapture.timestampLabel}`,
+                    )
+                  }
+                />
               ) : null}
             </div>
 

@@ -4,8 +4,10 @@ import type { CaptureRecord } from "../types";
 import { ICON_STROKE_WIDTH } from "../constants";
 import { formatRangeLabel } from "../utils/app";
 import { prefersReducedMotion } from "../utils/motion";
+import { useContextMenu, type CaptureMenuBuilder } from "./ContextMenu";
 
 type FilmstripProps = {
+  buildCaptureMenu: CaptureMenuBuilder;
   captures: CaptureRecord[];
   hasNewerPages: boolean;
   hasOlderPages: boolean;
@@ -28,6 +30,7 @@ type FilmstripProps = {
 const MAGNIFY_RADIUS = 150;
 
 export function Filmstrip({
+  buildCaptureMenu,
   captures,
   hasNewerPages,
   hasOlderPages,
@@ -45,6 +48,7 @@ export function Filmstrip({
   onLoadOlder,
   onSelectCapture,
 }: FilmstripProps) {
+  const openContextMenu = useContextMenu();
   const trackRef = useRef<HTMLDivElement | null>(null);
   const frameRef = useRef<number | null>(null);
   const pointerXRef = useRef<number | null>(null);
@@ -144,6 +148,14 @@ export function Filmstrip({
                 aria-current={isActive ? "true" : undefined}
                 aria-label={`Capture at ${capture.timestampLabel}`}
                 onClick={() => onSelectCapture(capture.id)}
+                onContextMenu={(event) => {
+                  onSelectCapture(capture.id);
+                  openContextMenu(
+                    event,
+                    buildCaptureMenu(capture, { surface: "filmstrip", source: event.currentTarget.querySelector("img") }),
+                    `Capture at ${capture.timestampLabel}`,
+                  );
+                }}
               >
                 <span className="film-thumb-frame">
                   <img src={capture.thumbnailDataUrl} alt="" draggable={false} />

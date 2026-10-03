@@ -1,14 +1,16 @@
 import { useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
 import type { DaySummary } from "../../types";
 import { ICON_STROKE_WIDTH } from "../../constants";
 import { dayDateFromKey, dayKeyFromDate } from "../../utils/app";
+import { useContextMenu } from "../ContextMenu";
 import { WorkspaceHeader } from "../primitives";
 
 type CalendarWorkspaceProps = {
   daySummaries: DaySummary[];
   selectedDayKey: string;
   todayKey: string;
+  onDeleteDay: (dayKey: string) => void;
   onSelectDay: (dayKey: string) => void;
 };
 
@@ -18,7 +20,8 @@ type CalendarCell =
   | { kind: "pad"; key: string }
   | { kind: "day"; key: string; dayKey: string; dayNumber: number; summary: DaySummary | undefined };
 
-export function CalendarWorkspace({ daySummaries, selectedDayKey, todayKey, onSelectDay }: CalendarWorkspaceProps) {
+export function CalendarWorkspace({ daySummaries, selectedDayKey, todayKey, onDeleteDay, onSelectDay }: CalendarWorkspaceProps) {
+  const openContextMenu = useContextMenu();
   const [viewMonth, setViewMonth] = useState<Date>(() => {
     const anchor = dayDateFromKey(selectedDayKey);
     return new Date(anchor.getFullYear(), anchor.getMonth(), 1);
@@ -143,6 +146,17 @@ export function CalendarWorkspace({ daySummaries, selectedDayKey, todayKey, onSe
                 disabled={count === 0}
                 aria-label={`${dayDateFromKey(cell.dayKey).toDateString()}: ${count} captures`}
                 onClick={() => onSelectDay(cell.dayKey)}
+                onContextMenu={(event) =>
+                  openContextMenu(
+                    event,
+                    [
+                      { id: "open-day", label: "Open Day", icon: CalendarDays, onSelect: () => onSelectDay(cell.dayKey) },
+                      { id: "sep-delete", separator: true },
+                      { id: "delete-day", label: "Delete Day…", icon: Trash2, danger: true, onSelect: () => onDeleteDay(cell.dayKey) },
+                    ],
+                    dayDateFromKey(cell.dayKey).toDateString(),
+                  )
+                }
               >
                 <span className="calendar-day-number">{cell.dayNumber}</span>
                 {count > 0 ? (

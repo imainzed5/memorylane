@@ -172,6 +172,7 @@ const SHORTCUT_GROUPS: Array<{ title: string; items: Array<[string, string]> }> 
       ["B", "Bookmark"],
       ["F", "Favorite"],
       ["Delete", "Delete capture"],
+      ["Shift F10", "Actions for the focused capture"],
     ],
   },
   {

@@ -54,6 +54,20 @@
   background: var(--fill-2);
 }
 
+/* --- Context menu ---------------------------------------------------------------- */
+
+/* Shares .popover's material and .menu-item rows with the toolbar's More menu. */
+.context-menu {
+  position: fixed;
+  z-index: 90;
+  min-width: 220px;
+  max-width: 320px;
+  padding: 5px;
+  gap: 1px;
+  outline: none;
+  animation: context-menu-in var(--dur-fast) var(--ease-out);
+}
+
 /* --- Sheets (modal dialogs) --------------------------------------------------- */
 
 .sheet-overlay {

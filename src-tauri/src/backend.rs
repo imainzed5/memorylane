@@ -2804,6 +2804,40 @@ fn open_captures_folder_internal(state: &SharedState) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn reveal_capture_in_explorer(state: State<'_, SharedState>, capture_id: i64) -> Result<(), String> {
+    let owned = state.inner().clone();
+    let admission = owned.commands.clone();
+    coordinator::run_blocking(&admission, move || { reveal_capture_in_explorer_internal(&owned, capture_id) }).await
+}
+
+fn reveal_capture_in_explorer_internal(state: &SharedState, capture_id: i64) -> Result<(), String> {
+    let image_path = with_connection(state, |conn| {
+        conn.query_row("SELECT image_path FROM captures WHERE id = ?", params![capture_id], |row| row.get::<_, String>(0))
+            .map_err(|error| format!("failed to load capture image path: {error}"))
+    })?;
+    let image_path = PathBuf::from(image_path);
+    if !image_path.is_file() {
+        return Err("The image file for this capture is missing.".to_string());
+    }
+    // Only ever hand Explorer a file inside the managed archive.
+    validate_managed_path(&state.capture_dir, &image_path)?;
+
+    let mut command = Command::new("explorer");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // Explorer parses `/select,"path"` itself; std's quoting of the whole arg breaks it.
+        command.raw_arg(format!("/select,\"{}\"", image_path.display()));
+    }
+    #[cfg(not(windows))]
+    command.arg(&image_path);
+    command
+        .spawn()
+        .map_err(|error| format!("failed to open Explorer: {error}"))?;
+    Ok(())
+}
+
+#[tauri::command]
 async fn get_settings(state: State<'_, SharedState>) -> Result<SettingsPayload, String> {
     let owned = state.inner().clone();
     let admission = owned.commands.clone();
@@ -5187,6 +5221,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_storage_path,
             open_captures_folder,
+            reveal_capture_in_explorer,
             get_settings,
             update_settings,
             set_startup_on_boot,
