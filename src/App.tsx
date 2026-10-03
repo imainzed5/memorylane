@@ -8,7 +8,7 @@ import "@fontsource/geist-sans/600.css";
 import "@fontsource/geist-sans/700.css";
 import "@fontsource/geist-mono/500.css";
 import "./App.css";
-import type { DaySummary, CaptureRecord, RetrievalSearchResult, ImportBackupPayload, PerformanceSnapshotPayload, CaptureContextPagePayload, CaptureImagePayload, CaptureHealthPayload, OcrHealthPayload, ReindexCapturesPayload, CaptureErrorEventPayload, SettingsPayload, SensitiveCaptureMode, CaptureReviewPayload, ReviewShortcutCapture, ReviewShortcutsPayload, CaptureSuppressedEventPayload, PauseStatePayload, StorageStatsPayload, DeleteCapturePayload, DeleteDayPayload, NoteSaveState, ThemeId, WorkspaceMode } from "./types";
+import type { DaySummary, CaptureRecord, RetrievalSearchResult, ImportBackupPayload, PerformanceSnapshotPayload, CaptureContextPagePayload, CaptureImagePayload, CaptureHealthPayload, OcrHealthPayload, ReindexCapturesPayload, CaptureErrorEventPayload, SettingsPayload, SensitiveCaptureMode, CaptureReviewPayload, ReviewShortcutCapture, ReviewShortcutsPayload, CaptureSuppressedEventPayload, RecordingStatePayload, StorageStatsPayload, DeleteCapturePayload, DeleteDayPayload, NoteSaveState, ThemeId, WorkspaceMode } from "./types";
 import { EMPTY_DENSITY, INSPECTOR_OPEN_STORAGE_KEY, INTERVAL_MIN_MINUTES, INTERVAL_OPTIONS, LIGHT_THEME_IDS, TIMELINE_PAGE_LIMIT, TIMELINE_VIRTUAL_WINDOW, TIMELINE_THUMB_WIDTH_PX, LEGACY_THEME_ID, ONBOARDING_THEME_ID, THEME_OPTIONS } from "./constants";
 import { TopBar } from "./components/TopBar";
 import { Sidebar } from "./components/Sidebar";
@@ -27,7 +27,18 @@ import { useArchiveSearch } from "./hooks/useArchiveSearch";
 import { useDayIntelligence } from "./hooks/useDayIntelligence";
 import { resolveThemeId, resolveSensitiveCaptureMode, parseListEditorText, listToEditorText, haveSameListValues, parseTagDraftInput, hasDismissedQuickStart, markQuickStartDismissed, themeName, dayKeyFromDate, dayDateFromKey, formatDaySecondary, formatViewerDate, formatCaptureTimestamp, isDayKey, formatCountdown, clampIntervalMinutes, fallbackDays, mergeCaptures, deriveContextBadge } from "./utils/app";
 
+import { ContentRevision, StaleContentError } from "./utils/contentRevision";
+import { acceptRecordingState } from "./utils/recordingState";
+
+import { ArchiveRefreshService, type ArchiveSnapshot, type RefreshScope } from "./utils/archiveRefresh";
+
+const archiveRefresh = new ArchiveRefreshService(invoke, TIMELINE_PAGE_LIMIT);
+
 function App() {
+  const contentRevision = useRef(new ContentRevision()).current;
+  const [libraryRevision, setLibraryRevision] = useState(0);
+  const readContent = useCallback(<T,>(command: string, args?: Record<string, unknown>) =>
+    contentRevision.read(() => invoke<T>(command, args)), [contentRevision]);
   const currentWindow = useMemo(() => getCurrentWindow(), []);
   const [daySummaries, setDaySummaries] = useState<DaySummary[]>([]);
   const [selectedDayKey, setSelectedDayKey] = useState<string>(() => dayKeyFromDate(new Date()));
@@ -40,8 +51,12 @@ function App() {
   const [loadedEndOffset, setLoadedEndOffset] = useState<number>(0);
   const [isPageLoading, setIsPageLoading] = useState<boolean>(false);
 
-  const [isRecording, setIsRecording] = useState<boolean>(true);
-  const [intervalMinutes, setIntervalMinutes] = useState<number>(2);
+  const [recordingState, setRecordingState] = useState<RecordingStatePayload | null>(null);
+  const applyRecordingState = useCallback((payload: RecordingStatePayload) => {
+    setRecordingState((current) => acceptRecordingState(current, payload));
+  }, []);
+  const isRecording = recordingState ? !recordingState.isPaused : true;
+  const intervalMinutes = recordingState?.intervalMinutes ?? 2;
   const [draftIntervalMinutes, setDraftIntervalMinutes] = useState<number>(2);
   const [isDraftIntervalCustom, setIsDraftIntervalCustom] = useState<boolean>(false);
   const [retentionDays, setRetentionDays] = useState<number>(30);
@@ -88,6 +103,11 @@ function App() {
     storageCapGb: 5,
     usagePercent: 0,
     captureCount: 0,
+    pendingCleanupBytes: 0,
+    pendingCleanupCount: 0,
+    untrackedBytes: 0,
+    accountingReady: false,
+    lastStorageError: null,
   });
   const [captureHealth, setCaptureHealth] = useState<CaptureHealthPayload>({
     consecutiveFailures: 0,
@@ -114,15 +134,21 @@ function App() {
     retrievalResults,
     setActiveRetrievalResultIndex,
     setCaptureSearchQuery,
+    invalidateSearch,
   } = useArchiveSearch({
     captures,
+    contentRevision,
+    libraryRevision,
     onPerformanceSnapshot: setPerformanceSnapshot,
   });
   const {
     dayIntelligence,
     dayIntelligenceError,
     isDayIntelligenceLoading,
+    invalidateIntelligence,
   } = useDayIntelligence({
+    contentRevision,
+    libraryRevision,
     captureCount: captures.length,
     dayKey: selectedDayKey,
     onPerformanceSnapshot: setPerformanceSnapshot,
@@ -147,6 +173,23 @@ function App() {
   });
   const [compareCaptureRef, setCompareCaptureRef] = useState<ReviewShortcutCapture | null>(null);
   const [compareImageDataUrl, setCompareImageDataUrl] = useState<string | null>(null);
+  const invalidateContent = useCallback(() => {
+    // Advance before scheduling state updates, so already-running promises are fenced now.
+    archiveRefresh.invalidate();
+    setLibraryRevision(contentRevision.invalidate());
+    setImageCacheById({});
+    setSelectedImageDataUrl(null);
+    setCompareImageDataUrl(null);
+    setCompareCaptureRef(null);
+    setCaptures([]);
+    setSelectedCaptureId(null);
+    setNoteDraft("");
+    setTagDraft("");
+    setReviewShortcuts({ bookmarks: [], favorites: [], tags: [] });
+    setIsQuickLookOpen(false);
+    invalidateSearch();
+    invalidateIntelligence();
+  }, [contentRevision, invalidateSearch, invalidateIntelligence]);
   const [noteSaveState, setNoteSaveState] = useState<NoteSaveState>("idle");
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [pendingRedactionCaptureId, setPendingRedactionCaptureId] = useState<number | null>(null);
@@ -441,80 +484,79 @@ function App() {
   }, [navigationDays, selectedDayKey, selectedDaySummary]);
 
   const nextCaptureLabel = useMemo(() => {
-    const lastCaptureAt = todaySummary?.lastCaptureAt;
-    if (!lastCaptureAt) {
-      return `Next capture in ${intervalMinutes} min`;
+    if (recordingState?.isMaintaining) return "Library maintenance in progress";
+    if (recordingState?.isCapturing) return "Capture in progress";
+    if (recordingState?.isPaused) return "Scheduled captures paused";
+    const deadline = recordingState?.nextScheduledAttemptAt;
+    if (deadline == null) return "Resolving capture schedule...";
+    return `Next attempt in ${formatCountdown(deadline - clockMs)}`;
+  }, [clockMs, recordingState]);
+
+  const appliedSnapshot = useRef<ArchiveSnapshot | null>(null);
+  const loadedRefreshDay = useRef<{ dayKey: string; summaries: DaySummary[] } | null>(null);
+  const refreshShared = useCallback(async (scope: RefreshScope, dayKey = selectedDayKeyRef.current) => {
+    const outcome = await archiveRefresh.request({ owner: contentRevision, libraryRevision: contentRevision.current(),
+      updateRevision: archiveRefresh.currentRevision(), dayKey }, scope);
+    if (outcome.status !== "ready") {
+      if (archiveRefresh.isCurrent(outcome.context) && outcome.status !== "superseded")
+        setActionMessage(outcome.status === "busy" ? "Archive is busy. Refresh again shortly." : "Unable to refresh archive.");
+      return outcome;
     }
-
-    const nextCaptureAt = new Date(lastCaptureAt).getTime() + intervalMinutes * 60 * 1000;
-    if (Number.isNaN(nextCaptureAt)) {
-      return `Next capture in ${intervalMinutes} min`;
+    if (!archiveRefresh.isCurrent(outcome.context) || appliedSnapshot.current === outcome.snapshot) return outcome;
+    const snapshot = outcome.snapshot!;
+    appliedSnapshot.current = snapshot;
+    if (snapshot.status) {
+      const { settings, stats, health, performance, ocr: nextOcrHealth, recording: nextRecordingState } = snapshot.status;
+      setRetentionDays(settings.retentionDays);
+      setStorageCapGb(settings.storageCapGb);
+      applyRecordingState(nextRecordingState);
+      setStartupOnBoot(settings.startupOnBoot);
+      setStartupOnBootSupported(settings.startupOnBootSupported);
+      const trimmedTheme = settings.themeId.trim();
+      const resolvedTheme = resolveThemeId(trimmedTheme);
+      const needsThemeOnboarding = trimmedTheme.length === 0;
+      const resolvedSensitiveMode = resolveSensitiveCaptureMode(settings.sensitiveCaptureMode);
+      setThemeId(resolvedTheme);
+      setExcludedProcesses(settings.excludedProcesses ?? []);
+      setExcludedWindowKeywords(settings.excludedWindowKeywords ?? []);
+      setPauseProcesses(settings.pauseProcesses ?? []);
+      setPauseWindowKeywords(settings.pauseWindowKeywords ?? []);
+      setSensitiveWindowKeywords(settings.sensitiveWindowKeywords ?? []);
+      setSensitiveCaptureMode(resolvedSensitiveMode);
+      setOnboardingThemeId(needsThemeOnboarding ? ONBOARDING_THEME_ID : resolvedTheme);
+      setIsThemeOnboardingOpen(needsThemeOnboarding);
+      if (needsThemeOnboarding) {
+        setIsQuickStartOpen(false);
+      } else if (!hasDismissedQuickStart()) {
+        setIsQuickStartOpen(true);
+      }
+      setStorageStats(stats);
+      setCaptureHealth(health);
+      setPerformanceSnapshot(performance);
+      setOcrHealth(nextOcrHealth);
     }
-
-    return `Next capture in ${formatCountdown(nextCaptureAt - clockMs)}`;
-  }, [clockMs, intervalMinutes, todaySummary?.lastCaptureAt]);
-
-  const refreshStoragePath = useCallback(async () => {
-    const resolvedPath = await invoke<string>("get_storage_path");
-    setStoragePath(resolvedPath);
-  }, []);
-
-  const refreshSettingsAndStats = useCallback(async () => {
-    const [settings, stats, health, performance, nextOcrHealth] = await Promise.all([
-      invoke<SettingsPayload>("get_settings"),
-      invoke<StorageStatsPayload>("get_storage_stats"),
-      invoke<CaptureHealthPayload>("get_capture_health"),
-      invoke<PerformanceSnapshotPayload>("get_performance_snapshot"),
-      invoke<OcrHealthPayload>("get_ocr_health"),
-    ]);
-
-    setIntervalMinutes(settings.intervalMinutes);
-    setRetentionDays(settings.retentionDays);
-    setStorageCapGb(settings.storageCapGb);
-    setIsRecording(!settings.isPaused);
-    setStartupOnBoot(settings.startupOnBoot);
-    setStartupOnBootSupported(settings.startupOnBootSupported);
-    const trimmedTheme = settings.themeId.trim();
-    const resolvedTheme = resolveThemeId(trimmedTheme);
-    const needsThemeOnboarding = trimmedTheme.length === 0;
-    const resolvedSensitiveMode = resolveSensitiveCaptureMode(settings.sensitiveCaptureMode);
-    setThemeId(resolvedTheme);
-    setExcludedProcesses(settings.excludedProcesses ?? []);
-    setExcludedWindowKeywords(settings.excludedWindowKeywords ?? []);
-    setPauseProcesses(settings.pauseProcesses ?? []);
-    setPauseWindowKeywords(settings.pauseWindowKeywords ?? []);
-    setSensitiveWindowKeywords(settings.sensitiveWindowKeywords ?? []);
-    setSensitiveCaptureMode(resolvedSensitiveMode);
-    setOnboardingThemeId(needsThemeOnboarding ? ONBOARDING_THEME_ID : resolvedTheme);
-    setIsThemeOnboardingOpen(needsThemeOnboarding);
-    if (needsThemeOnboarding) {
-      setIsQuickStartOpen(false);
-    } else if (!hasDismissedQuickStart()) {
-      setIsQuickStartOpen(true);
+    if (snapshot.review) setReviewShortcuts(snapshot.review);
+    if (snapshot.storagePath !== undefined) setStoragePath(snapshot.storagePath);
+    if (snapshot.day) {
+      const { summaries, dayKey, captures: page, startOffset } = snapshot.day;
+      loadedRefreshDay.current = { dayKey, summaries };
+      setDaySummaries(summaries);
+      setSelectedDayKey(dayKey);
+      setCaptures(page);
+      setLoadedStartOffset(startOffset);
+      setLoadedEndOffset(startOffset + page.length);
     }
-    setStorageStats(stats);
-    setCaptureHealth(health);
-    setPerformanceSnapshot(performance);
-    setOcrHealth(nextOcrHealth);
-  }, []);
-
-  const refreshReviewShortcuts = useCallback(async () => {
-    try {
-      const payload = await invoke<ReviewShortcutsPayload>("get_review_shortcuts", {
-        limit: 12,
-      });
-      setReviewShortcuts(payload);
-    } catch {
-      // Ignore shortcut refresh failures and keep existing in-memory state.
-    }
-  }, []);
+    return outcome;
+  }, [contentRevision, applyRecordingState]);
+  const refreshSettingsAndStats = useCallback(() => refreshShared("status"), [refreshShared]);
+  const refreshReviewShortcuts = useCallback(() => refreshShared("review"), [refreshShared]);
 
   const fetchCapturePage = useCallback(async (dayKey: string, offset: number, limit: number) => {
     if (limit <= 0) {
       return [] as CaptureRecord[];
     }
 
-    return invoke<CaptureRecord[]>("get_day_captures", {
+    return readContent<CaptureRecord[]>("get_day_captures", {
       dayKey,
       offset,
       limit,
@@ -523,6 +565,7 @@ function App() {
 
   const initializeDayCaptures = useCallback(
     async (dayKey: string, totalCaptures: number) => {
+      const revision = contentRevision.current();
       setIsPageLoading(true);
 
       try {
@@ -538,9 +581,12 @@ function App() {
         const limit = Math.max(1, totalCaptures - startOffset);
         const page = await fetchCapturePage(dayKey, startOffset, limit);
 
+        if (!contentRevision.isCurrent(revision)) return;
         setCaptures(page);
         setLoadedStartOffset(startOffset);
         setLoadedEndOffset(startOffset + page.length);
+      } catch (error) {
+        if (!(error instanceof StaleContentError)) setActionMessage("Unable to load captures.");
       } finally {
         setIsPageLoading(false);
       }
@@ -548,33 +594,15 @@ function App() {
     [fetchCapturePage],
   );
 
-  const refreshDaySummaries = useCallback(async (fallbackDayKey: string) => {
-    const summaries = await invoke<DaySummary[]>("get_day_summaries");
-    setDaySummaries(summaries);
-
-    const nextDayKey = isDayKey(fallbackDayKey)
-      ? fallbackDayKey
-      : summaries[0]?.dayKey ?? dayKeyFromDate(new Date());
-
-    setSelectedDayKey(nextDayKey);
-    return { summaries, nextDayKey };
-  }, []);
-
-  const refreshAll = useCallback(
-    async (fallbackDayKey: string) => {
-      await Promise.all([refreshSettingsAndStats(), refreshStoragePath(), refreshReviewShortcuts()]);
-      const { summaries, nextDayKey } = await refreshDaySummaries(fallbackDayKey);
-      const total = summaries.find((day) => day.dayKey === nextDayKey)?.captureCount ?? 0;
-      await initializeDayCaptures(nextDayKey, total);
-    },
-    [initializeDayCaptures, refreshDaySummaries, refreshReviewShortcuts, refreshSettingsAndStats, refreshStoragePath],
-  );
+  const refreshAll = useCallback((fallbackDayKey: string) =>
+    refreshShared("all", isDayKey(fallbackDayKey) ? fallbackDayKey : dayKeyFromDate(new Date())), [refreshShared]);
 
   const loadOlderPage = useCallback(async () => {
     if (isPageLoading || loadedStartOffset <= 0) {
       return;
     }
 
+    const revision = contentRevision.current();
     setIsPageLoading(true);
 
     try {
@@ -582,8 +610,11 @@ function App() {
       const limit = loadedStartOffset - nextStart;
       const page = await fetchCapturePage(selectedDayKey, nextStart, limit);
 
+      if (!contentRevision.isCurrent(revision)) return;
       setCaptures((current) => mergeCaptures(page, current));
       setLoadedStartOffset(nextStart);
+    } catch (error) {
+      if (!(error instanceof StaleContentError)) setActionMessage("Unable to load captures.");
     } finally {
       setIsPageLoading(false);
     }
@@ -594,6 +625,7 @@ function App() {
       return;
     }
 
+    const revision = contentRevision.current();
     setIsPageLoading(true);
 
     try {
@@ -601,8 +633,11 @@ function App() {
       const limit = Math.min(TIMELINE_PAGE_LIMIT, remaining);
       const page = await fetchCapturePage(selectedDayKey, loadedEndOffset, limit);
 
+      if (!contentRevision.isCurrent(revision)) return;
       setCaptures((current) => mergeCaptures(current, page));
       setLoadedEndOffset((current) => current + page.length);
+    } catch (error) {
+      if (!(error instanceof StaleContentError)) setActionMessage("Unable to load captures.");
     } finally {
       setIsPageLoading(false);
     }
@@ -658,13 +693,14 @@ function App() {
 
     setSelectedImageDataUrl(null);
 
+    const revision = contentRevision.current();
     const loadSelectedImage = async () => {
       try {
         const payload = await invoke<CaptureImagePayload>("get_capture_image", {
           captureId: selectedCaptureId,
         });
 
-        if (!disposed) {
+        if (!disposed && contentRevision.isCurrent(revision)) {
           setImageCacheById((current) => ({
             ...current,
             [payload.id]: payload.imageDataUrl,
@@ -672,7 +708,7 @@ function App() {
           setSelectedImageDataUrl(payload.imageDataUrl);
         }
       } catch {
-        if (!disposed) {
+        if (!disposed && contentRevision.isCurrent(revision)) {
           setActionMessage("Unable to load the selected screenshot image.");
         }
       }
@@ -683,7 +719,7 @@ function App() {
     return () => {
       disposed = true;
     };
-  }, [imageCacheById, selectedCaptureId]);
+  }, [contentRevision, libraryRevision, imageCacheById, selectedCaptureId]);
 
   useEffect(() => {
     let disposed = false;
@@ -706,13 +742,14 @@ function App() {
 
     setCompareImageDataUrl(null);
 
+    const revision = contentRevision.current();
     const loadCompareImage = async () => {
       try {
         const payload = await invoke<CaptureImagePayload>("get_capture_image", {
           captureId: compareCaptureId,
         });
 
-        if (!disposed) {
+        if (!disposed && contentRevision.isCurrent(revision)) {
           setImageCacheById((current) => ({
             ...current,
             [payload.id]: payload.imageDataUrl,
@@ -720,7 +757,7 @@ function App() {
           setCompareImageDataUrl(payload.imageDataUrl);
         }
       } catch {
-        if (!disposed) {
+        if (!disposed && contentRevision.isCurrent(revision)) {
           setActionMessage("Unable to load compare capture image.");
         }
       }
@@ -731,7 +768,7 @@ function App() {
     return () => {
       disposed = true;
     };
-  }, [compareCaptureRef?.captureId, imageCacheById, selectedCaptureId]);
+  }, [contentRevision, libraryRevision, compareCaptureRef?.captureId, imageCacheById, selectedCaptureId]);
 
   useEffect(() => {
     if (!selectedCapture) {
@@ -749,13 +786,69 @@ function App() {
   useEffect(() => {
     let disposed = false;
     let unlistenCaptures: (() => void) | undefined;
-    let unlistenPause: (() => void) | undefined;
+    let unlistenRecording: (() => void) | undefined;
     let unlistenCaptureError: (() => void) | undefined;
     let unlistenCaptureSuppressed: (() => void) | undefined;
 
     const bootstrap = async () => {
       setIsLoading(true);
 
+      if (disposed) return;
+      try {
+        unlistenCaptures = await listen<{ contentInvalidated?: boolean } | null>("captures-updated", (event) => {
+          if (!disposed) {
+            if (event.payload?.contentInvalidated) invalidateContent();
+            else archiveRefresh.invalidate();
+            void refreshAll(selectedDayKeyRef.current).catch(() => setActionMessage("Unable to refresh archive."));
+          }
+        });
+
+        if (disposed) { unlistenCaptures(); return; }
+        unlistenRecording = await listen<RecordingStatePayload>("recording-state-changed", (event) => {
+          if (!disposed) applyRecordingState(event.payload);
+        });
+        if (disposed) { unlistenRecording(); return; }
+        // Read again after registration so a state transition during bootstrap is not missed.
+        try {
+          const latestRecording = await invoke<RecordingStatePayload>("get_recording_state");
+          if (!disposed) applyRecordingState(latestRecording);
+        } catch { /* A transient read failure must not skip the remaining listeners. */ }
+        if (disposed) return;
+
+        unlistenCaptureError = await listen<CaptureErrorEventPayload>("capture-error", (event) => {
+          if (!disposed) {
+            setActionMessage(`Capture error: ${event.payload.message}`);
+            void refreshSettingsAndStats().catch(() => setActionMessage("Unable to refresh archive status."));
+          }
+        });
+
+        if (disposed) { unlistenCaptureError(); return; }
+        unlistenCaptureSuppressed = await listen<CaptureSuppressedEventPayload>("capture-suppressed", (event) => {
+          if (disposed) {
+            return;
+          }
+
+          const payload = event.payload;
+          if (payload.mode === "pause") {
+            setActionMessage(`Capture auto-paused. ${payload.reason}`);
+            void refreshSettingsAndStats().catch(() => setActionMessage("Unable to refresh archive status."));
+            return;
+          }
+
+          if (payload.captured) {
+            setActionMessage(`Capture saved with redaction. ${payload.reason}`);
+          } else {
+            setActionMessage(payload.reason);
+          }
+        });
+        if (disposed) unlistenCaptureSuppressed();
+      } catch {
+        if (!disposed) {
+          setActionMessage("Live event bridge not available outside desktop runtime.");
+        }
+      }
+
+      if (disposed) return;
       try {
         await refreshAll(dayKeyFromDate(new Date()));
       } catch {
@@ -768,49 +861,6 @@ function App() {
         }
       }
 
-      try {
-        unlistenCaptures = await listen("captures-updated", async () => {
-          if (!disposed) {
-            await refreshAll(selectedDayKeyRef.current);
-          }
-        });
-
-        unlistenPause = await listen<PauseStatePayload>("pause-state-changed", (event) => {
-          if (!disposed) {
-            setIsRecording(!event.payload.isPaused);
-          }
-        });
-
-        unlistenCaptureError = await listen<CaptureErrorEventPayload>("capture-error", async (event) => {
-          if (!disposed) {
-            setActionMessage(`Capture error: ${event.payload.message}`);
-            await refreshSettingsAndStats();
-          }
-        });
-
-        unlistenCaptureSuppressed = await listen<CaptureSuppressedEventPayload>("capture-suppressed", async (event) => {
-          if (disposed) {
-            return;
-          }
-
-          const payload = event.payload;
-          if (payload.mode === "pause") {
-            setActionMessage(`Capture auto-paused. ${payload.reason}`);
-            await refreshSettingsAndStats();
-            return;
-          }
-
-          if (payload.captured) {
-            setActionMessage(`Capture saved with redaction. ${payload.reason}`);
-          } else {
-            setActionMessage(payload.reason);
-          }
-        });
-      } catch {
-        if (!disposed) {
-          setActionMessage("Live event bridge not available outside desktop runtime.");
-        }
-      }
     };
 
     void bootstrap();
@@ -820,8 +870,8 @@ function App() {
       if (unlistenCaptures) {
         unlistenCaptures();
       }
-      if (unlistenPause) {
-        unlistenPause();
+      if (unlistenRecording) {
+        unlistenRecording();
       }
       if (unlistenCaptureError) {
         unlistenCaptureError();
@@ -830,13 +880,15 @@ function App() {
         unlistenCaptureSuppressed();
       }
     };
-  }, [refreshAll, refreshSettingsAndStats, setActionMessage]);
+  }, [invalidateContent, refreshAll, refreshSettingsAndStats, setActionMessage]);
 
   useEffect(() => {
     if (isLoading) {
       return;
     }
 
+    if (loadedRefreshDay.current?.dayKey === selectedDayKey && loadedRefreshDay.current.summaries === daySummaries) return;
+    loadedRefreshDay.current = null;
     const total = daySummaries.find((day) => day.dayKey === selectedDayKey)?.captureCount ?? 0;
     void initializeDayCaptures(selectedDayKey, total);
   }, [daySummaries, initializeDayCaptures, isLoading, selectedDayKey]);
@@ -866,10 +918,10 @@ function App() {
   const triggerCaptureNow = useCallback(async () => {
     try {
       await invoke("capture_now");
+      setActionMessage("Capture cycle completed.");
       await refreshAll(selectedDayKeyRef.current);
-      setActionMessage("Capture cycle completed and timeline refreshed.");
-    } catch {
-      setActionMessage("Capture command failed. Check screen permissions and runtime logs.");
+    } catch (error) {
+      setActionMessage(String(error ?? "Capture request failed."));
     }
   }, [refreshAll]);
 
@@ -909,7 +961,7 @@ function App() {
 
   const fetchCaptureContext = useCallback(async (captureId: number) => {
     try {
-      return await invoke<CaptureContextPagePayload>("get_capture_context_page", {
+      return await readContent<CaptureContextPagePayload>("get_capture_context_page", {
         captureId,
         pageSize: TIMELINE_PAGE_LIMIT,
       });
@@ -928,7 +980,9 @@ function App() {
 
   const openCaptureContext = useCallback(
     async (captureId: number) => {
+      const revision = contentRevision.current();
       const payload = await fetchCaptureContext(captureId);
+      if (!contentRevision.isCurrent(revision)) return null;
       if (payload) {
         applyCaptureContext(payload);
       }
@@ -958,6 +1012,7 @@ function App() {
   // Gallery tile -> viewer: the tile's thumbnail morphs into the viewer image.
   const jumpToGalleryCapture = useCallback(
     async (captureId: number, source: HTMLElement | null) => {
+      const revision = contentRevision.current();
       const payload = await fetchCaptureContext(captureId);
       if (!payload) {
         setActionMessage("Unable to open capture.");
@@ -967,6 +1022,7 @@ function App() {
       workspaceModeRef.current = "browse";
       runViewTransition(
         () => {
+          if (!contentRevision.isCurrent(revision)) return;
           applyCaptureContext(payload);
           setWorkspaceMode("browse");
         },
@@ -1016,6 +1072,7 @@ function App() {
         return;
       }
 
+      const revision = contentRevision.current();
       setIsReviewBusy(true);
       try {
         const payload = await invoke<CaptureReviewPayload>("set_capture_review_state", {
@@ -1025,6 +1082,7 @@ function App() {
           tags: options.tags,
         });
 
+        if (!contentRevision.isCurrent(revision)) return;
         setCaptures((current) =>
           current.map((capture) =>
             capture.id === payload.captureId
@@ -1125,6 +1183,7 @@ function App() {
         clearNote: false,
       });
 
+      invalidateContent();
       await refreshAll(selectedDayKeyRef.current);
       setActionMessage("Capture redacted successfully.");
     } catch {
@@ -1132,7 +1191,7 @@ function App() {
     } finally {
       setIsReviewBusy(false);
     }
-  }, [pendingRedactionCaptureId, refreshAll, selectedCapture]);
+  }, [invalidateContent, pendingRedactionCaptureId, refreshAll, selectedCapture]);
 
   const jumpThroughRetrievalResults = useCallback(
     async (step: number) => {
@@ -1216,10 +1275,10 @@ function App() {
     const nextPaused = isRecording;
 
     try {
-      const payload = await invoke<PauseStatePayload>("set_pause_state", {
+      const payload = await invoke<RecordingStatePayload>("set_pause_state", {
         isPaused: nextPaused,
       });
-      setIsRecording(!payload.isPaused);
+      applyRecordingState(payload);
       setActionMessage(payload.isPaused ? "Capture paused from dashboard." : "Capture resumed from dashboard.");
     } catch {
       setActionMessage("Unable to update recording pause state.");
@@ -1254,7 +1313,6 @@ function App() {
         sensitiveCaptureMode: sensitiveModeTarget,
       });
 
-      setIntervalMinutes(updated.intervalMinutes);
       setRetentionDays(updated.retentionDays);
       setStorageCapGb(updated.storageCapGb);
       setStartupOnBoot(updated.startupOnBoot);
@@ -1347,6 +1405,7 @@ function App() {
         passphrase: backupPassphrase,
       });
 
+      invalidateContent();
       await refreshAll(selectedDayKeyRef.current);
       setBackupStatusTone("success");
       setMaintenanceStage("Encrypted backup restored.");
@@ -1364,7 +1423,7 @@ function App() {
     } finally {
       setIsBackupBusy(false);
     }
-  }, [backupImportPath, backupPassphrase, refreshAll]);
+  }, [invalidateContent, backupImportPath, backupPassphrase, refreshAll]);
 
   const reindexAllCaptures = useCallback(async () => {
     if (isOcrReindexBusy) {
@@ -1470,6 +1529,7 @@ function App() {
       return;
     }
 
+    const revision = contentRevision.current();
     setNoteSaveState("saving");
 
     try {
@@ -1478,6 +1538,7 @@ function App() {
         note: noteDraft,
       });
 
+      if (!contentRevision.isCurrent(revision)) return;
       setCaptures((current) =>
         current.map((capture) =>
           capture.id === selectedCapture.id
@@ -1543,6 +1604,7 @@ function App() {
       const payload = await invoke<DeleteCapturePayload>("delete_capture", {
         captureId: selectedCapture.id,
       });
+      invalidateContent();
       if (compareCaptureRef?.captureId === selectedCapture.id) {
         clearCompareAnchor();
       }
@@ -1551,7 +1613,7 @@ function App() {
     } catch {
       setActionMessage("Delete capture action failed.");
     }
-  }, [clearCompareAnchor, compareCaptureRef?.captureId, pendingDeleteCaptureId, refreshAll, selectedCapture]);
+  }, [invalidateContent, clearCompareAnchor, compareCaptureRef?.captureId, pendingDeleteCaptureId, refreshAll, selectedCapture]);
 
   const deleteSelectedDay = useCallback(async () => {
     if (selectedDaySummary.captureCount === 0) {
@@ -1573,6 +1635,7 @@ function App() {
       const payload = await invoke<DeleteDayPayload>("delete_day", {
         dayKey: selectedDaySummary.dayKey,
       });
+      invalidateContent();
       if (compareCaptureRef?.dayKey === payload.dayKey) {
         clearCompareAnchor();
       }
@@ -1583,7 +1646,7 @@ function App() {
     } catch {
       setActionMessage("Delete day action failed.");
     }
-  }, [clearCompareAnchor, compareCaptureRef?.dayKey, pendingDeleteDayKey, refreshAll, selectedDaySummary, todayKey]);
+  }, [invalidateContent, clearCompareAnchor, compareCaptureRef?.dayKey, pendingDeleteDayKey, refreshAll, selectedDaySummary, todayKey]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -2069,7 +2132,7 @@ function App() {
             ) : null}
 
             {workspaceMode === "all-captures" ? (
-              <GalleryWorkspace onSelectCapture={(captureId, source) => void jumpToGalleryCapture(captureId, source)} />
+              <GalleryWorkspace key={libraryRevision} onSelectCapture={(captureId, source) => void jumpToGalleryCapture(captureId, source)} />
             ) : null}
 
             {workspaceMode === "calendar" ? (

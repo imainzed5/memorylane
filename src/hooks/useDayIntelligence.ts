@@ -1,21 +1,31 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import type { ContentRevision } from "../utils/contentRevision";
 import { invoke } from "@tauri-apps/api/core";
 import type { DayIntelligencePayload, PerformanceSnapshotPayload } from "../types";
 import { isDayKey } from "../utils/app";
 
 type UseDayIntelligenceOptions = {
+  contentRevision: ContentRevision;
+  libraryRevision: number;
   captureCount: number;
   dayKey: string;
   onPerformanceSnapshot: (snapshot: PerformanceSnapshotPayload) => void;
 };
 
-export function useDayIntelligence({ captureCount, dayKey, onPerformanceSnapshot }: UseDayIntelligenceOptions) {
+export function useDayIntelligence({ captureCount, dayKey, contentRevision, libraryRevision, onPerformanceSnapshot }: UseDayIntelligenceOptions) {
   const [dayIntelligence, setDayIntelligence] = useState<DayIntelligencePayload | null>(null);
   const [isDayIntelligenceLoading, setIsDayIntelligenceLoading] = useState<boolean>(false);
   const [dayIntelligenceError, setDayIntelligenceError] = useState<string | null>(null);
 
+  const invalidateIntelligence = useCallback(() => {
+    setDayIntelligence(null);
+    setDayIntelligenceError(null);
+    setIsDayIntelligenceLoading(false);
+  }, []);
+
   useEffect(() => {
     let disposed = false;
+    const revision = contentRevision.current();
 
     if (!isDayKey(dayKey)) {
       setDayIntelligence(null);
@@ -26,6 +36,7 @@ export function useDayIntelligence({ captureCount, dayKey, onPerformanceSnapshot
       };
     }
 
+    setDayIntelligence(null);
     setIsDayIntelligenceLoading(true);
     setDayIntelligenceError(null);
 
@@ -36,22 +47,22 @@ export function useDayIntelligence({ captureCount, dayKey, onPerformanceSnapshot
             dayKey,
           });
 
-          if (!disposed) {
+          if (!disposed && contentRevision.isCurrent(revision)) {
             setDayIntelligence(payload);
           }
         } catch {
-          if (!disposed) {
+          if (!disposed && contentRevision.isCurrent(revision)) {
             setDayIntelligenceError("Day summary unavailable right now.");
           }
         } finally {
-          if (!disposed) {
+          if (!disposed && contentRevision.isCurrent(revision)) {
             setIsDayIntelligenceLoading(false);
           }
         }
 
         try {
           const snapshot = await invoke<PerformanceSnapshotPayload>("get_performance_snapshot");
-          if (!disposed) {
+          if (!disposed && contentRevision.isCurrent(revision)) {
             onPerformanceSnapshot(snapshot);
           }
         } catch {
@@ -66,9 +77,10 @@ export function useDayIntelligence({ captureCount, dayKey, onPerformanceSnapshot
       disposed = true;
       window.clearTimeout(timeoutId);
     };
-  }, [captureCount, dayKey, onPerformanceSnapshot]);
+  }, [captureCount, dayKey, contentRevision, libraryRevision, onPerformanceSnapshot]);
 
   return {
+    invalidateIntelligence,
     dayIntelligence,
     dayIntelligenceError,
     isDayIntelligenceLoading,

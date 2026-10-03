@@ -1,10 +1,335 @@
 use super::*;
+
+fn fixture_desktop() -> privacy::PrivacySnapshot {
+    privacy::PrivacySnapshot { monitor: 1, bounds: (0, 0, 1920, 1080), foreground: 1, secure: false, epoch: 0,
+        windows: vec![privacy::VisibleWindow { handle: 1, rect: (0,0,1920,1080), title: "secret".into(), process: "fixture.exe".into(), title_known: true, process_known: true }] }
+}
+
+fn fixture_frame() -> Result<capture::CaptureOutcome, String> {
+    Ok(capture::CaptureOutcome::Frame(image::RgbaImage::from_pixel(32,32,image::Rgba([100,100,100,255]))))
+}
+
+fn fixture_capture_count(state: &SharedState) -> i64 {
+    with_connection(state, |conn| conn.query_row("SELECT COUNT(*) FROM captures", [], |row| row.get(0)).map_err(|e| e.to_string())).unwrap()
+}
+
+#[test]
+fn pause_acknowledges_during_acquisition_then_discards_all_outputs() {
+    let (_temp, state) = build_test_state();
+    let ticket = state.coordinator.lock().next(Instant::now()).unwrap().ticket;
+    let worker_state = state.clone();
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || capture_once_with(&worker_state, &ticket, None, || Ok(fixture_desktop()), || {
+        started_tx.send(()).unwrap(); release_rx.recv().unwrap(); fixture_frame()
+    }));
+    started_rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+    set_pause_internal(&state, true, None).unwrap();
+    assert!(state.coordinator.snapshot().is_paused);
+    assert!(with_connection(&state, read_settings).unwrap().is_paused);
+    release_tx.send(()).unwrap();
+    assert!(matches!(worker.join().unwrap().unwrap(), CaptureRunResult::Suppressed(_)));
+    assert_eq!(fixture_capture_count(&state), 0);
+    assert_eq!(directory_size(&state.capture_dir).unwrap(), 0);
+    assert_eq!(fs::read_dir(&state.capture_dir).unwrap().count(), 0);
+}
+
+#[test]
+fn pause_immediately_before_persistence_and_privacy_edits_discard_captures() {
+    for change_privacy in [false, true] {
+        let (_temp, state) = build_test_state();
+        let ticket = state.coordinator.lock().next(Instant::now()).unwrap().ticket;
+        let mut inspections = 0;
+        let result = capture_once_with(&state, &ticket, None, || {
+            inspections += 1;
+            if inspections == 3 {
+                if change_privacy {
+                    let mut core = state.coordinator.lock();
+                    let mut settings = core.settings.clone(); settings.excluded_processes.push("fixture.exe".into());
+                    apply_recording_settings_locked(&state, &mut core, settings);
+                } else { set_pause_internal(&state, true, None).unwrap(); }
+            }
+            Ok(fixture_desktop())
+        }, fixture_frame).unwrap();
+        assert!(matches!(result, CaptureRunResult::Suppressed(_)));
+        assert_eq!(fixture_capture_count(&state), 0);
+        assert_eq!(directory_size(&state.capture_dir).unwrap(), 0);
+        assert_eq!(fs::read_dir(&state.capture_dir).unwrap().count(), 0);
+    }
+}
+
+#[test]
+fn desktop_or_secure_context_changes_cannot_persist_acquired_pixels() {
+    for secure in [false, true] {
+        let (_temp, state) = build_test_state();
+        let ticket = state.coordinator.lock().next(Instant::now()).unwrap().ticket;
+        let mut inspections = 0;
+        let result = capture_once_with(&state, &ticket, None, || {
+            inspections += 1;
+            let mut desktop = fixture_desktop();
+            if inspections > 1 { desktop.secure = secure; desktop.epoch += 1; }
+            Ok(desktop)
+        }, fixture_frame).unwrap();
+        assert!(matches!(result, CaptureRunResult::Suppressed(_)));
+        assert_eq!(fixture_capture_count(&state), 0);
+        assert_eq!(directory_size(&state.capture_dir).unwrap(), 0);
+    }
+}
+
+
+
+
+#[test]
+fn failed_capture_transaction_removes_encoded_files_and_partial_rows() {
+    let (_temp, state) = build_test_state();
+    let ticket = state.coordinator.lock().next(Instant::now()).unwrap().ticket;
+    with_connection(&state, |conn| {
+        conn.execute_batch("CREATE TRIGGER fail_annotation BEFORE INSERT ON capture_annotations BEGIN SELECT RAISE(ABORT, 'injected'); END;").map_err(|e| e.to_string())
+    }).unwrap();
+    let result = capture_once_with(&state, &ticket, None, || Ok(fixture_desktop()), fixture_frame);
+    assert!(result.is_err());
+    assert_eq!(fixture_capture_count(&state), 0);
+    assert_eq!(directory_size(&state.capture_dir).unwrap(), 0);
+    with_connection(&state, |conn| {
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM capture_search_index", [], |row| row.get(0)).unwrap();
+        assert_eq!(count, 0); Ok(())
+    }).unwrap();
+}
+
+#[test]
+fn deliberate_manual_capture_while_paused_still_honors_redaction() {
+    let (_temp, state) = build_test_state();
+    set_pause_internal(&state, true, None).unwrap();
+    {
+        let mut core = state.coordinator.lock();
+        let mut settings = core.settings.clone(); settings.sensitive_window_keywords = vec!["secret".into()];
+        settings.sensitive_capture_mode = SensitiveCaptureMode::Redact;
+        apply_recording_settings_locked(&state, &mut core, settings);
+    }
+    let _reply = state.coordinator.request_manual().unwrap();
+    let ticket = state.coordinator.lock().next(Instant::now()).unwrap().ticket;
+    let result = capture_once_with(&state, &ticket, None, || Ok(fixture_desktop()), fixture_frame).unwrap();
+    assert!(matches!(result, CaptureRunResult::CapturedWithPolicy(_)));
+    assert_eq!(fixture_capture_count(&state), 1);
+    with_connection(&state, |conn| {
+        let (path, title, process): (String,String,String) = conn.query_row("SELECT image_path, window_title, process_name FROM captures", [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).unwrap();
+        assert_eq!(title, "[redacted]"); assert_eq!(process, "[redacted]");
+        let image = image::open(path).unwrap().to_rgb8();
+        assert!(image.pixels().all(|p| p.0.iter().all(|v| *v < 15))); Ok(())
+    }).unwrap();
+    assert!(state.coordinator.snapshot().is_paused);
+}
+
+#[test]
+fn pause_acknowledgement_serializes_with_persistence_and_publishes_consistent_state() {
+    let (_temp, state) = build_test_state();
+    let saving = state.coordinator.lock();
+    let pause_state = state.clone();
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (finished_tx, finished_rx) = std::sync::mpsc::channel();
+    let pause = std::thread::spawn(move || {
+        started_tx.send(()).unwrap();
+        set_pause_internal(&pause_state, true, None).unwrap();
+        finished_tx.send(()).unwrap();
+    });
+    started_rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+    assert!(finished_rx.try_recv().is_err());
+    drop(saving);
+    finished_rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap(); pause.join().unwrap();
+    let published = state.coordinator.snapshot();
+    assert!(published.is_paused && published.next_scheduled_attempt_at.is_none());
+    assert!(with_connection(&state, read_settings).unwrap().is_paused);
+    assert!(state.pause_state.load(Ordering::Acquire));
+}
+
+#[test]
+fn pause_does_not_wait_for_storage_work_or_a_capture_waiting_for_storage() {
+    let (_temp,state)=build_test_state();
+    let storage_busy=storage::gate(&state);
+    let ticket=state.coordinator.lock().next(Instant::now()).unwrap().ticket;
+    let worker_state=state.clone();let (encoded_tx,encoded_rx)=std::sync::mpsc::channel();
+    let worker=std::thread::spawn(move || {
+        let mut inspections=0;
+        capture_once_with(&worker_state,&ticket,None,|| {
+            inspections+=1;
+            if inspections==3 {encoded_tx.send(()).unwrap();}
+            Ok(fixture_desktop())
+        },fixture_frame)
+    });
+    encoded_rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+    let pause_state=state.clone();let (paused_tx,paused_rx)=std::sync::mpsc::channel();
+    let pause=std::thread::spawn(move || {set_pause_internal(&pause_state,true,None).unwrap();paused_tx.send(()).unwrap();});
+    // Filesystem maintenance may remain stalled. Pause has neither its gate nor a tree scan.
+    paused_rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+    assert!(state.coordinator.recording_state().is_paused);
+    drop(storage_busy);pause.join().unwrap();
+    assert!(matches!(worker.join().unwrap().unwrap(),CaptureRunResult::Suppressed(_)));
+    assert_eq!(fixture_capture_count(&state),0);
+}
+
+#[test]
+fn shutdown_during_acquisition_discards_outputs_and_failure_allows_another_attempt() {
+    let (_temp, state) = build_test_state();
+    let first = state.coordinator.lock().next(Instant::now()).unwrap();
+    assert!(capture_once_with(&state, &first.ticket, None, || Ok(fixture_desktop()), || Err("injected acquisition failure".into())).is_err());
+    state.coordinator.lock().finish(&first.ticket, Instant::now());
+    let _request = state.coordinator.request_manual().unwrap();
+    let second = state.coordinator.lock().next(Instant::now()).unwrap();
+    let result = capture_once_with(&state, &second.ticket, None, || Ok(fixture_desktop()), || {
+        state.coordinator.shutdown(); fixture_frame()
+    }).unwrap();
+    assert!(matches!(result, CaptureRunResult::Suppressed(_)));
+    assert_eq!(fixture_capture_count(&state), 0);
+    assert_eq!(directory_size(&state.capture_dir).unwrap(), 0);
+}
+
+#[test]
+fn a_panicking_database_capture_transaction_rolls_back_and_does_not_wedge_requests() {
+    let (_temp, state) = build_test_state();
+    let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _: Result<(), String> = with_connection(&state, |conn| {
+            let transaction = conn.unchecked_transaction().unwrap();
+            transaction.execute("INSERT INTO captures (day_key, captured_at, image_path, thumbnail_path, width, height) VALUES ('2026-04-12', 'fixture', 'missing', 'missing', 32, 32)", []).unwrap();
+            panic!("injected capture transaction panic");
+        });
+    }));
+    assert!(failure.is_err());
+    assert_eq!(fixture_capture_count(&state), 0);
+    assert!(!state.db.is_poisoned());
+    set_pause_internal(&state, true, None).unwrap();
+    assert!(state.coordinator.snapshot().is_paused);
+}
+
+#[test]
+fn concurrent_tray_toggles_do_not_lose_a_recording_state_change() {
+    let (_temp, state) = build_test_state();
+    let ready = Arc::new(std::sync::Barrier::new(3));
+    let threads: Vec<_> = (0..2).map(|_| {
+        let state = state.clone(); let ready = ready.clone();
+        std::thread::spawn(move || { ready.wait(); change_pause_internal(&state, None, None).unwrap(); })
+    }).collect();
+    ready.wait();
+    for thread in threads { thread.join().unwrap(); }
+    assert!(!state.coordinator.snapshot().is_paused);
+    assert!(!with_connection(&state, read_settings).unwrap().is_paused);
+    assert_eq!(state.coordinator.snapshot().generation, 2);
+}
+
+#[test]
+fn unsafe_day_inputs_do_not_touch_files_or_rows() {
+    let (temp, state) = build_test_state();
+    insert_fake_capture(&state, "2026-04-12", "keep", 8, 4).unwrap();
+    let sentinel = temp.path().join("sentinel.txt");
+    fs::write(&sentinel, "outside").unwrap();
+    for day in ["", ".", "..", "../", "2026-04-12/..", "C:\\", "C:relative", "/tmp",
+        "\\\\server\\share", "\\\\?\\C:\\", "2026-02-29", "2024-02-30", "2026-13-01",
+        "2026-00-01", "2026-04-00", "2026-4-12", "0000-01-01", "2026-04-12 ", "２０２６-04-12"] {
+        assert!(delete_day_internal(&state, day).is_err(), "accepted {day:?}");
+        assert_eq!(read_capture_ids_for_day(&state, "2026-04-12").unwrap().len(), 1);
+        assert_eq!(fs::read_to_string(&sentinel).unwrap(), "outside");
+        assert!(state.capture_dir.join("2026-04-12/keep.png").exists());
+    }
+    assert!(validate_day_key("2024-02-29").is_ok());
+    assert!(validate_day_key("2000-02-29").is_ok());
+    assert!(validate_day_key("1900-02-29").is_err());
+}
+
+#[test]
+fn poisoned_stored_paths_are_rejected_before_deleting_rows() {
+    let (temp, state) = build_test_state();
+    insert_fake_capture(&state, "2026-04-12", "keep", 8, 4).unwrap();
+    let id = read_capture_ids_for_day(&state, "2026-04-12").unwrap()[0];
+    let outside = temp.path().join("private.txt");
+    fs::write(&outside, "outside").unwrap();
+    with_connection(&state, |conn| {
+        conn.execute("UPDATE captures SET thumbnail_path = ? WHERE id = ?",
+            params![outside.to_string_lossy(), id]).unwrap();
+        Ok(())
+    }).unwrap();
+    assert!(delete_capture_internal(&state, id).is_err());
+    assert!(delete_day_internal(&state, "2026-04-12").is_err());
+    assert_eq!(fs::read_to_string(outside).unwrap(), "outside");
+    assert_eq!(read_capture_ids_for_day(&state, "2026-04-12").unwrap(), vec![id]);
+    assert!(state.capture_dir.join("2026-04-12/keep.png").exists());
+}
+
+#[test]
+fn missing_paths_still_require_safe_parents_and_strict_containment() {
+    let (_temp, state) = build_test_state();
+    assert!(validate_managed_path(&state.capture_dir, &state.capture_dir).is_err());
+    assert!(validate_managed_path(&state.capture_dir, &state.capture_dir.join("../missing")).is_err());
+    assert!(validate_managed_path(&state.capture_dir, &state.capture_dir.with_file_name("captures-other").join("missing")).is_err());
+    assert!(validate_managed_path(&state.capture_dir, &state.capture_dir.join("2026-04-12/missing.jpg")).is_ok());
+}
+
+#[test]
+fn backup_paths_reject_windows_escapes_and_device_aliases_on_every_platform() {
+    for path in ["", ".", "../outside", "C:relative", "C:/absolute", "\\\\server\\share", "\\\\?\\C:\\x",
+        "2026-04-12/image.jpg:secret", "2026-04-12/NUL.jpg", "2026-04-12/COM1", "2026-04-12/CONOUT$",
+        "2026-04-12/image.jpg.", "2026-04-12/image.jpg ", "/absolute"] {
+        assert!(normalize_backup_relative_path(path).is_err(), "accepted {path:?}");
+    }
+    assert!(normalize_backup_relative_path("2026-04-12/image.jpg").is_ok());
+}
+
+#[test]
+fn deletion_refuses_directory_indirection_and_preserves_external_tree() {
+    let (temp, state) = build_test_state();
+    insert_fake_capture(&state, "2026-04-12", "keep", 8, 4).unwrap();
+    let outside = temp.path().join("external");
+    fs::create_dir(&outside).unwrap();
+    fs::write(outside.join("private.txt"), "outside").unwrap();
+    let link = state.capture_dir.join("2026-04-12/redirect");
+    #[cfg(windows)]
+    {
+        let status = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link.to_string_lossy().replace('/', "\\")).arg(&outside).output().unwrap();
+        assert!(status.status.success(), "junction creation failed: {:?}", status);
+    }
+    #[cfg(not(windows))]
+    std::os::unix::fs::symlink(&outside, &link).unwrap();
+    assert!(delete_day_internal(&state, "2026-04-12").is_err());
+    assert!(validate_managed_path(&state.capture_dir, &link.join("missing.jpg")).is_err());
+    assert_eq!(fs::read_to_string(outside.join("private.txt")).unwrap(), "outside");
+    assert_eq!(read_capture_ids_for_day(&state, "2026-04-12").unwrap().len(), 1);
+    #[cfg(windows)]
+    fs::remove_dir(&link).unwrap();
+    #[cfg(not(windows))]
+    fs::remove_file(&link).unwrap();
+    // The same policy applies if the day itself or capture root is redirected.
+    fs::remove_dir_all(state.capture_dir.join("2026-04-12")).unwrap();
+    let day_link = state.capture_dir.join("2026-04-12");
+    #[cfg(windows)]
+    assert!(std::process::Command::new("cmd").args(["/C", "mklink", "/J"])
+        .arg(&day_link).arg(&outside).output().unwrap().status.success());
+    #[cfg(not(windows))]
+    std::os::unix::fs::symlink(&outside, &day_link).unwrap();
+    assert!(delete_day_internal(&state, "2026-04-12").is_err());
+    #[cfg(windows)]
+    fs::remove_dir(&day_link).unwrap();
+    #[cfg(not(windows))]
+    fs::remove_file(&day_link).unwrap();
+
+    fs::remove_dir(&state.capture_dir).unwrap();
+    #[cfg(windows)]
+    assert!(std::process::Command::new("cmd").args(["/C", "mklink", "/J"])
+        .arg(&state.capture_dir).arg(&outside).output().unwrap().status.success());
+    #[cfg(not(windows))]
+    std::os::unix::fs::symlink(&outside, &state.capture_dir).unwrap();
+    assert!(remove_capture_root_tree(&state.capture_dir).is_err());
+    assert_eq!(fs::read_to_string(outside.join("private.txt")).unwrap(), "outside");
+    #[cfg(windows)]
+    fs::remove_dir(&state.capture_dir).unwrap();
+    #[cfg(not(windows))]
+    fs::remove_file(&state.capture_dir).unwrap();
+}
     use std::fs::{File, OpenOptions};
     use tempfile::TempDir;
 
     const MB: u64 = 1024 * 1024;
 
-    fn build_test_state() -> (TempDir, SharedState) {
+    pub(super) fn build_test_state() -> (TempDir, SharedState) {
         let temp_dir = TempDir::new().expect("failed to create temp directory");
         let capture_dir = temp_dir.path().join("captures");
         let backup_dir = temp_dir.path().join("backups");
@@ -29,6 +354,12 @@ use super::*;
             search_cache: Arc::new(Mutex::new(HashMap::new())),
             intelligence_cache: Arc::new(Mutex::new(HashMap::new())),
             performance_stats: Arc::new(Mutex::new(PerformanceStats::default())),
+            coordinator: Arc::new(coordinator::CaptureCoordinator::new(settings.clone())),
+            commands: Arc::new(coordinator::CommandAdmission::new(8)),
+            controls: Arc::new(coordinator::CommandAdmission::new(2)),
+            backups: Arc::new(coordinator::CommandAdmission::new(1)),
+            storage_gate: Arc::new(Mutex::new(())),
+            _archive_lock: storage::lock_archive(temp_dir.path()).unwrap(),
         };
 
         (temp_dir, state)
@@ -41,7 +372,7 @@ use super::*;
             .map_err(|error| format!("failed to resize test file {}: {error}", path.display()))
     }
 
-    fn insert_fake_capture(
+    pub(super) fn insert_fake_capture(
         state: &SharedState,
         day_key: &str,
         stem: &str,
@@ -80,11 +411,13 @@ use super::*;
             let capture_id = conn.last_insert_rowid();
             ensure_capture_annotation_row(conn, capture_id)?;
 
+            storage::record_live(conn, &image_path)?;
+            storage::record_live(conn, &thumb_path)?;
             Ok(())
         })
     }
 
-    fn set_settings_for_test(
+    pub(super) fn set_settings_for_test(
         state: &SharedState,
         retention_days: i64,
         storage_cap_gb: f64,
@@ -503,6 +836,7 @@ use super::*;
         resize_day_files(&state, &mid_day, 320 * MB, 4 * MB).expect("failed to resize middle day files");
         resize_day_files(&state, &new_day, 320 * MB, 4 * MB).expect("failed to resize newest day files");
 
+        storage::reconcile(&state).expect("failed to reconcile externally resized fixture files");
         set_settings_for_test(&state, 365, 0.5).expect("failed to set storage-cap retention settings");
         apply_retention_rules(&state).expect("storage-cap retention purge failed");
 

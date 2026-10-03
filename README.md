@@ -20,11 +20,15 @@ MemoryLane helps you look back. It takes screenshots of your desktop on a schedu
 
 MemoryLane saves captures in its local app data folder. It doesn’t put them in a shared sync folder.
 
+Retention and cleanup continue while recording is paused. If Windows locks a removed file, MemoryLane keeps a cleanup record and retries, including after restart. Storage settings distinguish pending cleanup from live captures. Locked files may keep usage above the storage limit until they can be removed. Files outside the live archive are counted and preserved.
+
+An older MemoryLane archive is migrated automatically only into an uninitialized destination. Existing archives, including empty archives after deletion, are preserved. The migration leaves the older source intact and records its decision outside the archive so restoring a backup cannot repeat it.
+
 ## Getting started
 
 MemoryLane currently runs on Windows 10 and Windows 11.
 
-To run it from source, you’ll need Node.js, npm, Rust, and the Tauri prerequisites for Windows.
+To run it from source, you’ll need Node.js, npm, Rust 1.89 or newer, and the Tauri prerequisites for Windows.
 
 1. Install dependencies:
 
@@ -44,14 +48,18 @@ To run it from source, you’ll need Node.js, npm, Rust, and the Tauri prerequis
 | --- | --- |
 | `Left` / `Right` | View the previous or next capture |
 | `Up` / `Down` | Choose the previous or next day |
-| `Home` / `End` | Jump to the first or latest capture of the day |
-| `Space` | Pause or resume captures |
+| `Home` | Jump to the first loaded capture of the day |
+| `End` | Jump to the latest loaded capture when today is selected |
+| `Space` | Open or close Quick Look |
+| `P` | Pause or resume captures |
 | `C` | Capture now |
 | `O` | Open the captures folder |
 | `T` | Jump to today |
 | `,` / `.` | Load an earlier or later part of the timeline |
 | `Delete` | Delete the selected capture |
-| `Escape` | Close Settings |
+| `Escape` | Close the active dialog or Quick Look, or clear search |
+| `Ctrl+K` / `/` | Focus search |
+| `?` | Show keyboard shortcuts |
 
 ## Build from source
 

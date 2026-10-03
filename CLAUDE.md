@@ -68,7 +68,9 @@ New backend commands: add the fn in `backend.rs`, register it in `generate_handl
   Redacted captures must never store the real pixels, title, or process name.
 - OCR shells out to Tesseract if installed (`resolve_tesseract_executable`); the app must work
   without it.
-- Retention and storage cap are enforced after each capture (`apply_retention_rules`).
+- The capture worker also runs coalesced storage maintenance at startup, after captures/settings/imports,
+  and on a five-minute deadline while paused. `backend/storage.rs` owns transactional schema
+  migrations, byte accounting, and durable file-deletion retries; ordinary stats never scan the tree.
 - Data lives under the Tauri app data dir (`captures/` + `memorylane.db`). Everything stays
   local: never add network calls, telemetry, or cloud features.
 - Window material: `set_window_material` applies Mica through `window-vibrancy`. It returns

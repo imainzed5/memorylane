@@ -294,6 +294,14 @@ export function SettingsModal(props: SettingsModalProps) {
             <div className="meter" role="presentation">
               <span style={{ width: `${Math.max(0, Math.min(100, storageStats.usagePercent))}%` }} />
             </div>
+            {!storageStats.accountingReady && <p className="field-help">Checking storage usage. The total will update when maintenance finishes.</p>}
+            {storageStats.pendingCleanupCount > 0 && <p className="field-help">
+              {storageStats.pendingCleanupCount} removed files await cleanup ({formatStorageValue(storageStats.pendingCleanupBytes / (1024 ** 3))} still on disk). MemoryLane retries automatically.
+            </p>}
+            {storageStats.untrackedBytes > 0 && <p className="field-help">
+              {formatStorageValue(storageStats.untrackedBytes / (1024 ** 3))} belongs to files outside the live archive. These files count toward the limit and are preserved.
+            </p>}
+            {storageStats.lastStorageError && <p className="field-help">Storage maintenance needs attention: {storageStats.lastStorageError}</p>}
             <div className="field-grid">
               <label className="field" htmlFor="retention-days">
                 <span className="field-label">Keep captures for (days)</span>

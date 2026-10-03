@@ -1,19 +1,29 @@
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useCallback, useEffect, useMemo, useState } from "react";
+import type { ContentRevision } from "../utils/contentRevision";
 import { invoke } from "@tauri-apps/api/core";
 import type { CaptureRecord, PerformanceSnapshotPayload, RetrievalSearchResult } from "../types";
 import { buildCaptureSearchText } from "../utils/app";
 
 type UseArchiveSearchOptions = {
+  contentRevision: ContentRevision;
+  libraryRevision: number;
   captures: CaptureRecord[];
   onPerformanceSnapshot: (snapshot: PerformanceSnapshotPayload) => void;
 };
 
-export function useArchiveSearch({ captures, onPerformanceSnapshot }: UseArchiveSearchOptions) {
+export function useArchiveSearch({ captures, contentRevision, libraryRevision, onPerformanceSnapshot }: UseArchiveSearchOptions) {
   const [captureSearchQuery, setCaptureSearchQuery] = useState<string>("");
   const [retrievalResults, setRetrievalResults] = useState<RetrievalSearchResult[]>([]);
   const [isRetrievalLoading, setIsRetrievalLoading] = useState<boolean>(false);
   const [retrievalError, setRetrievalError] = useState<string | null>(null);
   const [activeRetrievalResultIndex, setActiveRetrievalResultIndex] = useState<number>(-1);
+
+  const invalidateSearch = useCallback(() => {
+    setRetrievalResults([]);
+    setRetrievalError(null);
+    setIsRetrievalLoading(false);
+    setActiveRetrievalResultIndex(-1);
+  }, []);
 
   const normalizedSearch = captureSearchQuery.trim().toLowerCase();
   const deferredNormalizedSearch = useDeferredValue(normalizedSearch);
@@ -42,6 +52,7 @@ export function useArchiveSearch({ captures, onPerformanceSnapshot }: UseArchive
 
   useEffect(() => {
     let disposed = false;
+    const revision = contentRevision.current();
     const query = captureSearchQuery.trim();
 
     if (query.length < 2) {
@@ -67,22 +78,22 @@ export function useArchiveSearch({ captures, onPerformanceSnapshot }: UseArchive
             limit: 20,
           });
 
-          if (!disposed) {
+          if (!disposed && contentRevision.isCurrent(revision)) {
             setRetrievalResults(results);
             setActiveRetrievalResultIndex(results.length > 0 ? 0 : -1);
           }
         } catch {
-          if (!disposed) {
+          if (!disposed && contentRevision.isCurrent(revision)) {
             setRetrievalError("Archive search unavailable right now.");
           }
         } finally {
-          if (!disposed) {
+          if (!disposed && contentRevision.isCurrent(revision)) {
             setIsRetrievalLoading(false);
           }
 
           try {
             const snapshot = await invoke<PerformanceSnapshotPayload>("get_performance_snapshot");
-            if (!disposed) {
+            if (!disposed && contentRevision.isCurrent(revision)) {
               onPerformanceSnapshot(snapshot);
             }
           } catch {
@@ -98,9 +109,10 @@ export function useArchiveSearch({ captures, onPerformanceSnapshot }: UseArchive
       disposed = true;
       window.clearTimeout(timeoutId);
     };
-  }, [captureSearchQuery, onPerformanceSnapshot]);
+  }, [captureSearchQuery, contentRevision, libraryRevision, onPerformanceSnapshot]);
 
   return {
+    invalidateSearch,
     activeRetrievalResultIndex,
     captureSearchQuery,
     filteredCaptures,

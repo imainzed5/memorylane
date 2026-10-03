@@ -49,8 +49,8 @@ fn capture_with_gdi() -> Result<RgbaImage, String> {
         Err(_) => Screen::all()
             .map_err(|error| format!("failed to list displays: {error}"))?
             .into_iter()
-            .next()
-            .ok_or_else(|| "no display available for capture".to_string())?,
+            .find(|screen| screen.display_info.is_primary)
+            .ok_or_else(|| "no primary display available for capture".to_string())?,
     };
 
     screen
@@ -114,7 +114,7 @@ pub(super) fn is_secure_desktop_active() -> bool {
         let _ = CloseDesktop(desktop);
 
         if read.is_err() {
-            return false;
+            return true;
         }
 
         let length = name.iter().position(|&unit| unit == 0).unwrap_or(name.len());

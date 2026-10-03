@@ -156,6 +156,18 @@ export type CaptureSuppressedEventPayload = {
   captured: boolean;
 };
 
+export type RecordingStatePayload = {
+  isPaused: boolean;
+  intervalMinutes: number;
+  isCapturing: boolean;
+  isMaintaining: boolean;
+  queuedManualCaptures: number;
+  nextScheduledAttemptAt: number | null;
+  lastAttemptAt: number | null;
+  generation: number;
+  revision: number;
+};
+
 export type PauseStatePayload = {
   isPaused: boolean;
 };
@@ -166,6 +178,11 @@ export type StorageStatsPayload = {
   storageCapGb: number;
   usagePercent: number;
   captureCount: number;
+  pendingCleanupBytes: number;
+  pendingCleanupCount: number;
+  untrackedBytes: number;
+  accountingReady: boolean;
+  lastStorageError: string | null;
 };
 
 export type DeleteCapturePayload = {

@@ -1,11 +1,11 @@
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
-use std::io::BufWriter;
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use aes_gcm::aead::Aead;
 use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
@@ -22,17 +22,6 @@ use sha2::Sha256;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Listener, Manager, Runtime, State, WindowEvent};
-#[cfg(target_os = "windows")]
-use windows_sys::Win32::Foundation::CloseHandle;
-#[cfg(target_os = "windows")]
-use windows_sys::Win32::System::Threading::{
-    OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
-};
-#[cfg(target_os = "windows")]
-use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetForegroundWindow, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
-};
-
 const DB_FILENAME: &str = "memorylane.db";
 const DEFAULT_INTERVAL_MINUTES: i64 = 2;
 const MIN_INTERVAL_MINUTES: i64 = 1;
@@ -80,6 +69,12 @@ struct SharedState {
     search_cache: Arc<Mutex<HashMap<String, SearchCacheEntry>>>,
     intelligence_cache: Arc<Mutex<HashMap<String, IntelligenceCacheEntry>>>,
     performance_stats: Arc<Mutex<PerformanceStats>>,
+    coordinator: Arc<coordinator::CaptureCoordinator>,
+    commands: Arc<coordinator::CommandAdmission>,
+    controls: Arc<coordinator::CommandAdmission>,
+    backups: Arc<coordinator::CommandAdmission>,
+    storage_gate: Arc<Mutex<()>>,
+    _archive_lock: Arc<File>,
 }
 
 #[derive(Clone)]
@@ -193,12 +188,6 @@ struct RetrievalSearchResultPayload {
     is_bookmarked: bool,
     is_favorite: bool,
     tags: Vec<String>,
-}
-
-#[derive(Clone, Default)]
-struct WindowContextMetadata {
-    window_title: String,
-    process_name: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -447,6 +436,11 @@ struct StorageStatsPayload {
     storage_cap_gb: f64,
     usage_percent: f64,
     capture_count: i64,
+    pending_cleanup_bytes: u64,
+    pending_cleanup_count: i64,
+    untracked_bytes: u64,
+    accounting_ready: bool,
+    last_storage_error: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -477,119 +471,20 @@ fn resolve_app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(app_data)
 }
 
-fn copy_directory_recursive(source: &Path, destination: &Path) -> Result<(), String> {
-    fs::create_dir_all(destination).map_err(|error| {
-        format!(
-            "failed to create destination directory {}: {error}",
-            destination.display()
-        )
-    })?;
-
-    let entries = fs::read_dir(source)
-        .map_err(|error| format!("failed to read source directory {}: {error}", source.display()))?;
-
-    for entry in entries {
-        let entry = entry.map_err(|error| format!("failed to read source entry: {error}"))?;
-        let source_path = entry.path();
-        let destination_path = destination.join(entry.file_name());
-
-        if source_path.is_dir() {
-            copy_directory_recursive(&source_path, &destination_path)?;
-        } else if source_path.is_file() {
-            fs::copy(&source_path, &destination_path).map_err(|error| {
-                format!(
-                    "failed to copy file {} to {}: {error}",
-                    source_path.display(),
-                    destination_path.display()
-                )
-            })?;
-        }
+fn migrate_legacy_app_data_if_needed(current_app_data: &Path) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    if let Some(root) = std::env::var_os("APPDATA") {
+        return legacy::migrate(current_app_data,&PathBuf::from(root).join("com.memorylane.app"), |_| Ok(()));
     }
-
+    let _ = current_app_data;
     Ok(())
 }
 
-fn capture_count_in_db(db_path: &Path) -> i64 {
-    if !db_path.exists() {
-        return 0;
-    }
-
-    let Ok(conn) = Connection::open(db_path) else {
-        return 0;
-    };
-
-    conn.query_row("SELECT COUNT(*) FROM captures", [], |row| row.get::<_, i64>(0))
-        .unwrap_or(0)
-}
-
-fn migrate_legacy_app_data_if_needed(current_app_data: &Path) -> Result<(), String> {
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = current_app_data;
-        return Ok(());
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        let Some(appdata_root) = std::env::var_os("APPDATA") else {
-            return Ok(());
-        };
-
-        let legacy_app_data = PathBuf::from(appdata_root).join("com.memorylane.app");
-
-        if !legacy_app_data.exists() || legacy_app_data == current_app_data {
-            return Ok(());
-        }
-
-        let legacy_db = legacy_app_data.join(DB_FILENAME);
-        if !legacy_db.exists() {
-            return Ok(());
-        }
-
-        let current_db = current_app_data.join(DB_FILENAME);
-        let legacy_count = capture_count_in_db(&legacy_db);
-        let current_count = capture_count_in_db(&current_db);
-
-        if legacy_count <= current_count {
-            return Ok(());
-        }
-
-        fs::create_dir_all(current_app_data).map_err(|error| {
-            format!(
-                "failed to ensure current app data directory {}: {error}",
-                current_app_data.display()
-            )
-        })?;
-
-        fs::copy(&legacy_db, &current_db).map_err(|error| {
-            format!(
-                "failed to copy legacy database {} to {}: {error}",
-                legacy_db.display(),
-                current_db.display()
-            )
-        })?;
-
-        let legacy_captures = legacy_app_data.join("captures");
-        let current_captures = current_app_data.join("captures");
-
-        if legacy_captures.exists() {
-            if current_captures.exists() {
-                fs::remove_dir_all(&current_captures).map_err(|error| {
-                    format!(
-                        "failed to clear current captures directory {}: {error}",
-                        current_captures.display()
-                    )
-                })?;
-            }
-
-            copy_directory_recursive(&legacy_captures, &current_captures)?;
-        }
-
-        Ok(())
-    }
-}
-
 fn initialize_database(conn: &Connection) -> Result<(), String> {
+    storage::initialize(conn)
+}
+
+fn initialize_database_v1(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS settings (
@@ -647,94 +542,37 @@ fn initialize_database(conn: &Connection) -> Result<(), String> {
 
     let existing_settings_count = conn
         .query_row("SELECT COUNT(*) FROM settings", [], |row| row.get::<_, i64>(0))
-        .unwrap_or(0);
+        .map_err(|e| e.to_string())?;
 
     // Support existing databases created before the startup_on_boot column existed.
-    let _ = conn.execute(
-        "ALTER TABLE settings ADD COLUMN startup_on_boot INTEGER NOT NULL DEFAULT 0",
-        [],
-    );
+    storage::add_column(conn, "settings", "startup_on_boot INTEGER NOT NULL DEFAULT 0")?;
 
     // Support existing databases created before theme persistence was introduced.
-    let _ = conn.execute(
-        "ALTER TABLE settings ADD COLUMN theme_id TEXT NOT NULL DEFAULT ''",
-        [],
-    );
-    let _ = conn.execute(
-        "ALTER TABLE settings ADD COLUMN excluded_processes TEXT NOT NULL DEFAULT '[]'",
-        [],
-    );
-    let _ = conn.execute(
-        "ALTER TABLE settings ADD COLUMN excluded_window_keywords TEXT NOT NULL DEFAULT '[]'",
-        [],
-    );
-    let _ = conn.execute(
-        "ALTER TABLE settings ADD COLUMN pause_processes TEXT NOT NULL DEFAULT '[]'",
-        [],
-    );
-    let _ = conn.execute(
-        "ALTER TABLE settings ADD COLUMN pause_window_keywords TEXT NOT NULL DEFAULT '[]'",
-        [],
-    );
-    let _ = conn.execute(
-        "ALTER TABLE settings ADD COLUMN sensitive_window_keywords TEXT NOT NULL DEFAULT '[]'",
-        [],
-    );
-    let _ = conn.execute(
-        "ALTER TABLE settings ADD COLUMN sensitive_capture_mode TEXT NOT NULL DEFAULT 'skip'",
-        [],
-    );
+    storage::add_column(conn, "settings", "theme_id TEXT NOT NULL DEFAULT ''")?;
+    storage::add_column(conn, "settings", "excluded_processes TEXT NOT NULL DEFAULT '[]'")?;
+    storage::add_column(conn, "settings", "excluded_window_keywords TEXT NOT NULL DEFAULT '[]'")?;
+    storage::add_column(conn, "settings", "pause_processes TEXT NOT NULL DEFAULT '[]'")?;
+    storage::add_column(conn, "settings", "pause_window_keywords TEXT NOT NULL DEFAULT '[]'")?;
+    storage::add_column(conn, "settings", "sensitive_window_keywords TEXT NOT NULL DEFAULT '[]'")?;
+    storage::add_column(conn, "settings", "sensitive_capture_mode TEXT NOT NULL DEFAULT 'skip'")?;
 
     // Support existing databases created before capture_note was introduced.
-    let _ = conn.execute(
-        "ALTER TABLE captures ADD COLUMN capture_note TEXT NOT NULL DEFAULT ''",
-        [],
-    );
+    storage::add_column(conn, "captures", "capture_note TEXT NOT NULL DEFAULT ''")?;
 
     // Support existing databases created before window/process metadata columns were introduced.
-    let _ = conn.execute(
-        "ALTER TABLE captures ADD COLUMN window_title TEXT NOT NULL DEFAULT ''",
-        [],
-    );
-    let _ = conn.execute(
-        "ALTER TABLE captures ADD COLUMN process_name TEXT NOT NULL DEFAULT ''",
-        [],
-    );
+    storage::add_column(conn, "captures", "window_title TEXT NOT NULL DEFAULT ''")?;
+    storage::add_column(conn, "captures", "process_name TEXT NOT NULL DEFAULT ''")?;
 
     // Support existing databases created before capture search indexing was introduced.
-    let _ = conn.execute(
-        "ALTER TABLE capture_search_index ADD COLUMN ocr_text TEXT NOT NULL DEFAULT ''",
-        [],
-    );
-    let _ = conn.execute(
-        "ALTER TABLE capture_search_index ADD COLUMN search_text TEXT NOT NULL DEFAULT ''",
-        [],
-    );
-    let _ = conn.execute(
-        "ALTER TABLE capture_search_index ADD COLUMN ocr_status TEXT NOT NULL DEFAULT 'pending'",
-        [],
-    );
-    let _ = conn.execute(
-        "ALTER TABLE capture_search_index ADD COLUMN ocr_error TEXT",
-        [],
-    );
-    let _ = conn.execute(
-        "ALTER TABLE capture_search_index ADD COLUMN indexed_at TEXT",
-        [],
-    );
+    storage::add_column(conn, "capture_search_index", "ocr_text TEXT NOT NULL DEFAULT ''")?;
+    storage::add_column(conn, "capture_search_index", "search_text TEXT NOT NULL DEFAULT ''")?;
+    storage::add_column(conn, "capture_search_index", "ocr_status TEXT NOT NULL DEFAULT 'pending'")?;
+    storage::add_column(conn, "capture_search_index", "ocr_error TEXT")?;
+    storage::add_column(conn, "capture_search_index", "indexed_at TEXT")?;
 
-    let _ = conn.execute(
-        "ALTER TABLE capture_annotations ADD COLUMN is_bookmarked INTEGER NOT NULL DEFAULT 0",
-        [],
-    );
-    let _ = conn.execute(
-        "ALTER TABLE capture_annotations ADD COLUMN is_favorite INTEGER NOT NULL DEFAULT 0",
-        [],
-    );
-    let _ = conn.execute(
-        "ALTER TABLE capture_annotations ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'",
-        [],
-    );
+    storage::add_column(conn, "capture_annotations", "is_bookmarked INTEGER NOT NULL DEFAULT 0")?;
+    storage::add_column(conn, "capture_annotations", "is_favorite INTEGER NOT NULL DEFAULT 0")?;
+    storage::add_column(conn, "capture_annotations", "tags TEXT NOT NULL DEFAULT '[]'")?;
 
     conn.execute(
         "
@@ -1078,10 +916,20 @@ fn evaluate_capture_policy(
 }
 
 fn with_connection<T>(state: &SharedState, f: impl FnOnce(&Connection) -> Result<T, String>) -> Result<T, String> {
-    let conn = state
-        .db
-        .lock()
-        .map_err(|_| "failed to lock database connection".to_string())?;
+    let conn = match state.db.lock() {
+        Ok(conn) => conn,
+        Err(poisoned) => {
+            let conn = poisoned.into_inner();
+            // A capture panic unwinds its transaction before releasing this guard. If an
+            // outstanding transaction remains, roll it back before allowing another request.
+            if !conn.is_autocommit() {
+                conn.execute_batch("ROLLBACK").map_err(|e| format!("failed to recover database worker: {e}"))?;
+            }
+            state.db.clear_poison();
+            conn
+        }
+    };
+    storage::enable_foreign_keys(&conn)?;
     f(&conn)
 }
 
@@ -1529,6 +1377,7 @@ fn capture_health_payload(state: &SharedState) -> CaptureHealthPayload {
     }
 }
 
+#[cfg(test)]
 fn directory_size(path: &Path) -> Result<u64, String> {
     let mut total = 0_u64;
     let entries = fs::read_dir(path)
@@ -1567,76 +1416,6 @@ fn to_timestamp_label(captured_at: &str) -> String {
     chrono::DateTime::parse_from_rfc3339(captured_at)
         .map(|dt| dt.with_timezone(&Local).format("%I:%M %p").to_string())
         .unwrap_or_else(|_| captured_at.to_string())
-}
-
-#[cfg(target_os = "windows")]
-fn capture_foreground_window_metadata() -> WindowContextMetadata {
-    unsafe {
-        let hwnd = GetForegroundWindow();
-        if hwnd.is_null() {
-            return WindowContextMetadata::default();
-        }
-
-        let title_length = GetWindowTextLengthW(hwnd);
-        let window_title = if title_length > 0 {
-            let mut buffer = vec![0_u16; (title_length as usize) + 1];
-            let copied = GetWindowTextW(hwnd, buffer.as_mut_ptr(), buffer.len() as i32);
-            if copied > 0 {
-                collapse_whitespace(
-                    &String::from_utf16_lossy(&buffer[..copied as usize])
-                        .trim()
-                        .to_string(),
-                )
-            } else {
-                String::new()
-            }
-        } else {
-            String::new()
-        };
-
-        let mut process_id: u32 = 0;
-        GetWindowThreadProcessId(hwnd, &mut process_id);
-
-        let process_name = if process_id > 0 {
-            let process_handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id);
-            if !process_handle.is_null() {
-                let mut path_buffer = vec![0_u16; 2048];
-                let mut path_length: u32 = path_buffer.len() as u32;
-                let resolved = QueryFullProcessImageNameW(
-                    process_handle,
-                    0,
-                    path_buffer.as_mut_ptr(),
-                    &mut path_length,
-                );
-                let _ = CloseHandle(process_handle);
-
-                if resolved != 0 && path_length > 0 {
-                    let full_path = String::from_utf16_lossy(&path_buffer[..path_length as usize]);
-                    let file_name = Path::new(&full_path)
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        .unwrap_or(full_path.as_str());
-                    collapse_whitespace(file_name)
-                } else {
-                    String::new()
-                }
-            } else {
-                String::new()
-            }
-        } else {
-            String::new()
-        };
-
-        WindowContextMetadata {
-            window_title,
-            process_name,
-        }
-    }
-}
-
-#[cfg(not(target_os = "windows"))]
-fn capture_foreground_window_metadata() -> WindowContextMetadata {
-    WindowContextMetadata::default()
 }
 
 fn refresh_capture_search_index(
@@ -2397,7 +2176,23 @@ fn decrypt_backup_payload(passphrase: &str, payload: &[u8]) -> Result<Vec<u8>, S
 }
 
 fn normalize_backup_relative_path(relative_path: &str) -> Result<PathBuf, String> {
+    // Apply Windows rules even in non-Windows tests (including ADS and device names).
+    if relative_path.is_empty() || relative_path.contains(':') {
+        return Err("backup contains invalid relative path".to_string());
+    }
     let path = PathBuf::from(relative_path.replace('\\', "/"));
+
+    for name in relative_path.replace('\\', "/").split('/') {
+        let stem = name.split('.').next().unwrap_or_default().to_ascii_uppercase();
+        if name.is_empty() || name == "." || name.ends_with(['.', ' '])
+            || name.chars().any(|c| c.is_control() || "<>\"|?*".contains(c))
+            || matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
+            || ((stem.starts_with("COM") || stem.starts_with("LPT"))
+                && stem.len() == 4 && matches!(stem.as_bytes()[3], b'1'..=b'9'))
+        {
+            return Err("backup contains invalid Windows path".to_string());
+        }
+    }
 
     for component in path.components() {
         if matches!(
@@ -2411,6 +2206,138 @@ fn normalize_backup_relative_path(relative_path: &str) -> Result<PathBuf, String
     }
 
     Ok(path)
+}
+
+fn validate_day_key(day_key: &str) -> Result<(), String> {
+    let bytes = day_key.as_bytes();
+    if bytes.len() != 10 || bytes[4] != b'-' || bytes[7] != b'-'
+        || bytes.iter().enumerate().any(|(i, b)| i != 4 && i != 7 && !b.is_ascii_digit())
+        || &day_key[..4] == "0000"
+        || NaiveDate::parse_from_str(day_key, "%Y-%m-%d").is_err()
+    {
+        return Err("day key must be a calendar date in YYYY-MM-DD format".to_string());
+    }
+    Ok(())
+}
+
+fn is_filesystem_indirection(metadata: &fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        // Includes junctions and all other reparse points, not only symbolic links.
+        metadata.file_attributes() & 0x400 != 0
+    }
+    #[cfg(not(windows))]
+    { metadata.file_type().is_symlink() }
+}
+
+// Check every existing component, including missing-file parents, without following links.
+// Only strict descendants may be used as stored file/day deletion targets.
+fn validate_managed_path(root: &Path, target: &Path) -> Result<(), String> {
+    if !root.is_absolute() || !target.is_absolute() {
+        return Err("managed capture paths must be absolute".to_string());
+    }
+    let relative = target.strip_prefix(root)
+        .map_err(|_| "capture path is outside managed storage".to_string())?;
+    if relative.as_os_str().is_empty() || relative.components().any(|c| !matches!(c, std::path::Component::Normal(_))) {
+        return Err("invalid managed capture path".to_string());
+    }
+    let root_metadata = fs::symlink_metadata(root).map_err(|e| format!("cannot inspect capture root: {e}"))?;
+    if is_filesystem_indirection(&root_metadata) || !root_metadata.is_dir() {
+        return Err("capture root must be a regular directory".to_string());
+    }
+    for ancestor in root.ancestors().skip(1) {
+        let metadata = fs::symlink_metadata(ancestor).map_err(|e| format!("cannot inspect capture root parent: {e}"))?;
+        if is_filesystem_indirection(&metadata) {
+            return Err("capture root parent contains filesystem indirection".to_string());
+        }
+    }
+    let canonical_root = fs::canonicalize(root).map_err(|e| format!("cannot resolve capture root: {e}"))?;
+    let mut current = root.to_path_buf();
+    for component in relative.components() {
+        if component.as_os_str().to_string_lossy().contains(':') {
+            return Err("invalid managed capture path".to_string());
+        }
+        current.push(component);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) => {
+                if is_filesystem_indirection(&metadata) {
+                    return Err("capture path contains filesystem indirection".to_string());
+                }
+                let resolved = fs::canonicalize(&current).map_err(|e| format!("cannot resolve capture path: {e}"))?;
+                if !resolved.starts_with(&canonical_root) {
+                    return Err("capture path escapes managed storage".to_string());
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => break,
+            Err(e) => return Err(format!("cannot inspect capture path: {e}")),
+        }
+    }
+    Ok(())
+}
+
+fn validate_managed_tree(root: &Path, target: &Path) -> Result<(), String> {
+    validate_managed_path(root, target)?;
+    match fs::symlink_metadata(target) {
+        Ok(metadata) if metadata.is_dir() => {
+            for entry in fs::read_dir(target).map_err(|e| format!("cannot inspect capture directory: {e}"))? {
+                validate_managed_tree(root, &entry.map_err(|e| e.to_string())?.path())?;
+            }
+        }
+        Ok(_) => (),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+        Err(e) => return Err(e.to_string()),
+    }
+    Ok(())
+}
+
+fn remove_managed_file(root: &Path, target: &Path) -> Result<bool, String> {
+    validate_managed_path(root, target)?;
+    match fs::remove_file(target) {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(format!("failed to remove capture file: {e}")),
+    }
+}
+
+fn remove_managed_tree(root: &Path, target: &Path) -> Result<(), String> {
+    validate_managed_tree(root, target)?;
+    if !target.exists() { return Ok(()); }
+    // Recheck each entry immediately before removal; never recurse through reparse points.
+    for entry in fs::read_dir(target).map_err(|e| e.to_string())? {
+        let path = entry.map_err(|e| e.to_string())?.path();
+        validate_managed_path(root, &path)?;
+        if fs::symlink_metadata(&path).map_err(|e| e.to_string())?.is_dir() {
+            remove_managed_tree(root, &path)?;
+        } else {
+            remove_managed_file(root, &path)?;
+        }
+    }
+    validate_managed_path(root, target)?;
+    fs::remove_dir(target).map_err(|e| format!("failed to remove capture directory: {e}"))
+}
+
+fn validate_capture_root_tree(root: &Path) -> Result<(), String> {
+    validate_managed_path(root, &root.join("root_validation"))?;
+    for entry in fs::read_dir(root).map_err(|e| e.to_string())? {
+        validate_managed_tree(root, &entry.map_err(|e| e.to_string())?.path())?;
+    }
+    Ok(())
+}
+
+fn remove_capture_root_tree(root: &Path) -> Result<(), String> {
+    validate_capture_root_tree(root)?;
+    for entry in fs::read_dir(root).map_err(|e| e.to_string())? {
+        let path = entry.map_err(|e| e.to_string())?.path();
+        validate_managed_path(root, &path)?;
+        if fs::symlink_metadata(&path).map_err(|e| e.to_string())?.is_dir() {
+            remove_managed_tree(root, &path)?;
+        } else {
+            remove_managed_file(root, &path)?;
+        }
+    }
+    validate_managed_path(root, &root.join("root_validation"))?;
+    fs::remove_dir(root).map_err(|e| e.to_string())
 }
 
 fn relative_capture_path(
@@ -2437,315 +2364,99 @@ fn relative_capture_path(
 }
 
 fn delete_day_internal(state: &SharedState, day_key: &str) -> Result<DeleteDayPayload, String> {
-    let mut image_paths = Vec::<String>::new();
-    let mut thumbnail_paths = Vec::<String>::new();
-
-    let removed_rows = with_connection(state, |conn| {
-        let mut path_stmt = conn
-            .prepare("SELECT image_path, thumbnail_path FROM captures WHERE day_key = ?")
-            .map_err(|error| format!("failed to prepare day file query: {error}"))?;
-        let mut rows = path_stmt
-            .query(params![day_key])
-            .map_err(|error| format!("failed to query day files: {error}"))?;
-
-        while let Some(row) = rows
-            .next()
-            .map_err(|error| format!("failed to read day file row: {error}"))?
-        {
-            image_paths.push(
-                row.get(0)
-                    .map_err(|error| format!("failed to read image path: {error}"))?,
-            );
-            thumbnail_paths.push(
-                row.get(1)
-                    .map_err(|error| format!("failed to read thumbnail path: {error}"))?,
-            );
-        }
-
-        conn.execute(
-            "DELETE FROM capture_search_index WHERE capture_id IN (SELECT id FROM captures WHERE day_key = ?)",
-            params![day_key],
-        )
-        .map_err(|error| format!("failed to delete day search index rows: {error}"))?;
-
-        conn.execute(
-            "DELETE FROM capture_annotations WHERE capture_id IN (SELECT id FROM captures WHERE day_key = ?)",
-            params![day_key],
-        )
-        .map_err(|error| format!("failed to delete day capture annotation rows: {error}"))?;
-
-        let removed = conn
-            .execute("DELETE FROM captures WHERE day_key = ?", params![day_key])
-            .map_err(|error| format!("failed to delete day captures: {error}"))?;
-
-        Ok(removed as i64)
-    })?;
-
-    let mut removed_files = 0_i64;
-
-    for path in image_paths.iter().chain(thumbnail_paths.iter()) {
-        if fs::metadata(path).is_ok() {
-            fs::remove_file(path).map_err(|error| format!("failed to remove file {}: {error}", path))?;
-            removed_files += 1;
-        }
-    }
-
-    let day_dir = state.capture_dir.join(day_key);
-    if day_dir.exists() {
-        let _ = fs::remove_dir_all(&day_dir);
-    }
-
-    Ok(DeleteDayPayload {
-        day_key: day_key.to_string(),
-        removed_rows,
-        removed_files,
-    })
+    let _storage = storage::gate(state);
+    validate_day_key(day_key)?;
+    // A day-level preflight preserves the accepted refusal of redirected day contents.
+    validate_managed_tree(&state.capture_dir, &state.capture_dir.join(day_key))?;
+    let (removed_rows, files) = storage::delete_rows(state, Some(day_key), None)?;
+    let removed_files = storage::cleanup_selected(state, true, storage::CLEANUP_BATCH, &files)?;
+    state.coordinator.request_maintenance(false);
+    Ok(DeleteDayPayload { day_key: day_key.to_string(), removed_rows, removed_files })
 }
 
 fn delete_capture_internal(state: &SharedState, capture_id: i64) -> Result<DeleteCapturePayload, String> {
-    let (day_key, image_path, thumbnail_path) = with_connection(state, |conn| {
-        conn.query_row(
-            "SELECT day_key, image_path, thumbnail_path FROM captures WHERE id = ?",
-            params![capture_id],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                ))
-            },
-        )
-        .map_err(|error| format!("failed to resolve capture for deletion: {error}"))
-    })?;
-
-    with_connection(state, |conn| {
-        conn.execute(
-            "DELETE FROM capture_search_index WHERE capture_id = ?",
-            params![capture_id],
-        )
-        .map_err(|error| format!("failed to delete capture search index row: {error}"))?;
-
-        conn.execute(
-            "DELETE FROM capture_annotations WHERE capture_id = ?",
-            params![capture_id],
-        )
-        .map_err(|error| format!("failed to delete capture annotation row: {error}"))?;
-
-        conn.execute("DELETE FROM captures WHERE id = ?", params![capture_id])
-            .map_err(|error| format!("failed to delete capture row: {error}"))?;
-
-        Ok(())
-    })?;
-
-    let mut removed_files = 0_i64;
-
-    for path in [&image_path, &thumbnail_path] {
-        if fs::metadata(path).is_ok() {
-            fs::remove_file(path).map_err(|error| format!("failed to remove file {}: {error}", path))?;
-            removed_files += 1;
-        }
-    }
-
-    let day_dir = state.capture_dir.join(&day_key);
-    if day_dir.exists() {
-        let day_capture_count = with_connection(state, |conn| {
-            conn.query_row(
-                "SELECT COUNT(*) FROM captures WHERE day_key = ?",
-                params![day_key],
-                |row| row.get::<_, i64>(0),
-            )
-            .map_err(|error| format!("failed to count remaining day captures: {error}"))
-        })?;
-
-        if day_capture_count == 0 {
-            let _ = fs::remove_dir_all(&day_dir);
-        }
-    }
-
-    Ok(DeleteCapturePayload {
-        capture_id,
-        day_key,
-        removed_files,
-    })
+    let _storage = storage::gate(state);
+    let day_key = with_connection(state, |conn| conn.query_row("SELECT day_key FROM captures WHERE id=?",
+        params![capture_id], |r| r.get::<_, String>(0)).map_err(|e| e.to_string()))?;
+    let (_,files) = storage::delete_rows(state, None, Some(capture_id))?;
+    let removed_files = storage::cleanup_selected(state, true, storage::CLEANUP_BATCH, &files)?;
+    state.coordinator.request_maintenance(false);
+    Ok(DeleteCapturePayload { capture_id, day_key, removed_files })
 }
 
+#[cfg(test)]
 fn apply_retention_rules(state: &SharedState) -> Result<(), String> {
-    let settings = with_connection(state, read_settings)?;
-    let keep_days = settings.retention_days.max(1);
-    let mut removed_any = false;
-
-    let mut day_keys = with_connection(state, |conn| {
-        let mut stmt = conn
-            .prepare("SELECT DISTINCT day_key FROM captures ORDER BY day_key ASC")
-            .map_err(|error| format!("failed to prepare day list query: {error}"))?;
-
-        let rows = stmt
-            .query_map([], |row| row.get::<_, String>(0))
-            .map_err(|error| format!("failed to run day list query: {error}"))?;
-
-        let mut collected = Vec::new();
-        for row in rows {
-            collected.push(row.map_err(|error| format!("failed to read day key: {error}"))?);
-        }
-
-        Ok(collected)
-    })?;
-
-    let today = Local::now().date_naive();
-    let cutoff = today
-        .checked_sub_days(chrono::Days::new((keep_days.saturating_sub(1)) as u64))
-        .unwrap_or(today);
-
-    for day_key in day_keys.clone() {
-        if let Ok(day_date) = NaiveDate::parse_from_str(&day_key, "%Y-%m-%d") {
-            if day_date < cutoff {
-                let _ = delete_day_internal(state, &day_key)?;
-                removed_any = true;
-            }
-        }
-    }
-
-    day_keys = with_connection(state, |conn| {
-        let mut stmt = conn
-            .prepare("SELECT DISTINCT day_key FROM captures ORDER BY day_key ASC")
-            .map_err(|error| format!("failed to prepare post-age day list query: {error}"))?;
-
-        let rows = stmt
-            .query_map([], |row| row.get::<_, String>(0))
-            .map_err(|error| format!("failed to run post-age day list query: {error}"))?;
-
-        let mut collected = Vec::new();
-        for row in rows {
-            collected.push(row.map_err(|error| format!("failed to read post-age day key: {error}"))?);
-        }
-
-        Ok(collected)
-    })?;
-
-    let cap_bytes = ((settings.storage_cap_gb.max(0.5)) * 1024.0 * 1024.0 * 1024.0) as u64;
-
-    while directory_size(&state.capture_dir)? > cap_bytes {
-        let oldest_day = day_keys.first().cloned();
-
-        match oldest_day {
-            Some(day_key) => {
-                let _ = delete_day_internal(state, &day_key)?;
-                day_keys.remove(0);
-                removed_any = true;
-            }
-            None => break,
-        }
-    }
-
-    if removed_any {
-        bump_indexing_epoch(state);
-    }
-
-    Ok(())
+    let _storage = storage::gate(state);
+    storage::retention(state).map(|_| ())
 }
 
-fn capture_once(state: &SharedState) -> Result<CaptureRunResult, String> {
-    let settings = with_connection(state, read_settings)?;
-    let window_context = capture_foreground_window_metadata();
-    let captured_window_title = window_context.window_title;
-    let captured_process_name = window_context.process_name;
-    let policy_outcome = evaluate_capture_policy(&settings, &captured_window_title, &captured_process_name);
+fn capture_once(state: &SharedState, ticket: &coordinator::CaptureTicket, app: Option<&AppHandle>) -> Result<CaptureRunResult, String> {
+    capture_once_with(state, ticket, app, privacy::snapshot, capture::capture_primary_display)
+}
 
+fn capture_once_with(state: &SharedState, ticket: &coordinator::CaptureTicket, app: Option<&AppHandle>,
+    mut snapshot: impl FnMut() -> Result<privacy::PrivacySnapshot, String>,
+    acquire: impl FnOnce() -> Result<capture::CaptureOutcome, String>) -> Result<CaptureRunResult, String> {
+    let suppressed = |reason: &str| Ok(CaptureRunResult::Suppressed(privacy::suppressed(reason)));
+    if !state.coordinator.lock().ticket_valid(ticket) { return suppressed("Recording or privacy settings changed."); }
+    let settings = &ticket.settings;
+    let before = snapshot()?;
+    let policy_outcome = privacy::evaluate(settings, &before);
     if let Some(policy) = &policy_outcome {
-        if policy.mode == "skip" {
-            clear_capture_error_state(state);
-            return Ok(CaptureRunResult::Suppressed(policy.clone()));
-        }
-
-        if policy.mode == "pause" {
-            set_pause_internal(state, true)?;
+        if policy.mode == "pause" { set_pause_internal(state, true, app)?; }
+        if policy.mode == "skip" || policy.mode == "pause" {
             clear_capture_error_state(state);
             return Ok(CaptureRunResult::Suppressed(policy.clone()));
         }
     }
-
-    let redact_capture = policy_outcome
-        .as_ref()
-        .map(|payload| payload.mode == "redact")
-        .unwrap_or(false);
-
-    if capture::is_secure_desktop_active() {
-        clear_capture_error_state(state);
-        return Ok(CaptureRunResult::Suppressed(CaptureSuppressedEventPayload {
-            mode: "skip".to_string(),
-            reason: "Screen is locked".to_string(),
-            captured: false,
-        }));
-    }
-
-    let screenshot = match capture::capture_primary_display()? {
+    let redact_capture = policy_outcome.as_ref().is_some_and(|policy| policy.mode == "redact");
+    let screenshot = match acquire()? {
         capture::CaptureOutcome::Frame(frame) => frame,
-        capture::CaptureOutcome::Blank => {
-            clear_capture_error_state(state);
-            return Ok(CaptureRunResult::Suppressed(CaptureSuppressedEventPayload {
-                mode: "skip".to_string(),
-                reason: "Screen was blank".to_string(),
-                captured: false,
-            }));
-        }
+        capture::CaptureOutcome::Blank => return suppressed("Screen was blank."),
     };
-
+    if !state.coordinator.lock().ticket_valid(ticket) { return suppressed("Recording or privacy settings changed during capture."); }
+    if before != snapshot()? { return suppressed("Desktop context changed during capture."); }
     let now = Local::now();
     let day_key = now.format("%Y-%m-%d").to_string();
-    let mut window_title = captured_window_title.clone();
-    let mut process_name = captured_process_name.clone();
-    let day_dir = state.capture_dir.join(&day_key);
-
-    fs::create_dir_all(&day_dir)
-        .map_err(|error| format!("failed to ensure day capture directory exists: {error}"))?;
-
-    let stem = now.format("%Y%m%d_%H%M%S_%3f").to_string();
-    let image_path = day_dir.join(format!("{stem}.jpg"));
-    let thumbnail_path = day_dir.join(format!("{stem}_thumb.jpg"));
+    let foreground = before.windows.iter().find(|window| window.handle == before.foreground);
+    let window_title = if redact_capture { "[redacted]".to_string() } else { foreground.map(|w| w.title.clone()).unwrap_or_default() };
+    let process_name = if redact_capture { "[redacted]".to_string() } else { foreground.map(|w| w.process.clone()).unwrap_or_default() };
+    let capture_note = if redact_capture { "[redacted by sensitive capture policy]" } else { "" }.to_string();
     let full_image = if redact_capture {
-        image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
-            screenshot.width(),
-            screenshot.height(),
-            image::Rgba([8, 8, 8, 255]),
-        ))
-    } else {
-        image::DynamicImage::ImageRgba8(screenshot.clone())
-    };
-
-    if redact_capture {
-        window_title = "[redacted]".to_string();
-        process_name = "[redacted]".to_string();
-    }
-
-    let capture_note = if redact_capture {
-        "[redacted by sensitive capture policy]".to_string()
-    } else {
-        String::new()
-    };
-
+        image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(screenshot.width(), screenshot.height(), image::Rgba([8,8,8,255])))
+    } else { image::DynamicImage::ImageRgba8(screenshot.clone()) };
+    // Encoding is cancellable by generation, and does not touch disk or hold the DB/barrier.
+    let mut image_bytes = Vec::new();
+    JpegEncoder::new_with_quality(&mut image_bytes, 82).encode_image(&full_image)
+        .map_err(|e| format!("failed to encode screenshot: {e}"))?;
+    let mut thumbnail_bytes = Vec::new();
+    JpegEncoder::new_with_quality(&mut thumbnail_bytes, 68).encode_image(&full_image.thumbnail(360,202))
+        .map_err(|e| format!("failed to encode thumbnail: {e}"))?;
+    if before != snapshot()? { return suppressed("Desktop context changed while encoding."); }
+    let capture_id;
+    let mut pending = storage::PendingCaptureFiles::new(state);
     {
-        let file = File::create(&image_path)
-            .map_err(|error| format!("failed to create screenshot file: {error}"))?;
-        let writer = BufWriter::new(file);
-        let mut encoder = JpegEncoder::new_with_quality(writer, 82);
-        encoder
-            .encode_image(&full_image)
-            .map_err(|error| format!("failed to encode screenshot jpeg: {error}"))?;
-    }
-
-    {
-        let thumbnail = full_image.thumbnail(360, 202);
-        let file = File::create(&thumbnail_path)
-            .map_err(|error| format!("failed to create thumbnail file: {error}"))?;
-        let writer = BufWriter::new(file);
-        let mut encoder = JpegEncoder::new_with_quality(writer, 68);
-        encoder
-            .encode_image(&thumbnail)
-            .map_err(|error| format!("failed to encode thumbnail jpeg: {error}"))?;
-    }
-
-    let capture_id = with_connection(state, |conn| {
-        conn.execute(
+        // Pause acknowledgement and persistence are serialized here. Pause can finish while
+        // acquisition/encoding is running; an older ticket can never cross this barrier afterward.
+        let _storage = storage::gate(state);
+        let core = state.coordinator.lock();
+        if !core.ticket_valid(ticket) { return suppressed("Recording or privacy settings changed."); }
+        if before != snapshot()? { return suppressed("Desktop context changed before saving."); }
+        let day_dir = state.capture_dir.join(&day_key);
+        validate_managed_path(&state.capture_dir, &day_dir)?;
+        fs::create_dir_all(&day_dir).map_err(|e| e.to_string())?;
+        validate_managed_path(&state.capture_dir, &day_dir)?;
+        let mut nonce = [0u8;16]; OsRng.fill_bytes(&mut nonce);
+        let unique = nonce.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+        let stem = format!("{}_{}", now.format("%Y%m%d_%H%M%S"), unique);
+        let image_path = day_dir.join(format!("{stem}.jpg"));
+        let thumbnail_path = day_dir.join(format!("{stem}_thumb.jpg"));
+        pending.write(&image_path, &image_bytes)?;
+        pending.write(&thumbnail_path, &thumbnail_bytes)?;
+        if before != snapshot()? { return suppressed("Desktop context changed before saving metadata."); }
+        capture_id = with_connection(state, |conn| {
+            let transaction = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        transaction.execute(
             "
             INSERT INTO captures (
                 day_key,
@@ -2774,10 +2485,10 @@ fn capture_once(state: &SharedState) -> Result<CaptureRunResult, String> {
         )
         .map_err(|error| format!("failed to persist capture metadata: {error}"))?;
 
-        let inserted_capture_id = conn.last_insert_rowid();
-        ensure_capture_annotation_row(conn, inserted_capture_id)?;
+        let inserted_capture_id = transaction.last_insert_rowid();
+        ensure_capture_annotation_row(&transaction, inserted_capture_id)?;
         refresh_capture_search_index(
-            conn,
+            &transaction,
             inserted_capture_id,
             &capture_note,
             "",
@@ -2788,24 +2499,20 @@ fn capture_once(state: &SharedState) -> Result<CaptureRunResult, String> {
             None,
         )?;
 
-        Ok(inserted_capture_id)
-    })?;
-
+            pending.commit_files(&transaction)?;
+            transaction.commit().map_err(|e| format!("failed to commit capture: {e}"))?;
+            Ok(inserted_capture_id)
+        })?;
+        pending.committed = true;
+    }
     bump_indexing_epoch(state);
-
-    if !redact_capture {
-        schedule_capture_index(state.clone(), capture_id);
-    }
-
-    apply_retention_rules(state)?;
+    if !redact_capture { schedule_capture_index(state.clone(), capture_id); }
+    state.coordinator.request_maintenance(false);
     clear_capture_error_state(state);
-
-    if let Some(payload) = policy_outcome {
-        Ok(CaptureRunResult::CapturedWithPolicy(payload))
-    } else {
-        Ok(CaptureRunResult::Captured)
-    }
+    if let Some(payload) = policy_outcome { Ok(CaptureRunResult::CapturedWithPolicy(payload)) }
+    else { Ok(CaptureRunResult::Captured) }
 }
+
 
 fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
     if let Some(window) = app.get_webview_window("main") {
@@ -2815,59 +2522,109 @@ fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
-fn set_pause_internal(state: &SharedState, is_paused: bool) -> Result<(), String> {
-    with_connection(state, |conn| {
-        let mut settings = read_settings(conn)?;
-        settings.is_paused = is_paused;
-        write_settings(conn, &settings)
-    })?;
+fn publish_recording_state(app: &AppHandle, state: &SharedState) {
+    let payload = state.coordinator.snapshot();
+    let _ = app.emit("pause-state-changed", PauseStatePayload { is_paused: payload.is_paused });
+    let _ = app.emit("recording-state-changed", payload);
+}
 
-    state.pause_state.store(is_paused, Ordering::Relaxed);
+fn apply_recording_settings_locked(state: &SharedState, core: &mut coordinator::Core, settings: Settings) {
+    state.pause_state.store(settings.is_paused, Ordering::Release);
+    core.apply_settings(settings, Instant::now());
+    state.coordinator.cache_snapshot(core);
+    state.coordinator.notify();
+}
+
+// Capture-side exclusion is needed when restore runs off the event thread. Full backup/OCR
+// maintenance coordination and recoverable directory swapping remain separate storage work.
+struct RestoreCaptureGuard<'a> { state: &'a SharedState, app: &'a AppHandle }
+impl<'a> RestoreCaptureGuard<'a> {
+    fn begin(state: &'a SharedState, app: &'a AppHandle) -> Result<Self, String> {
+        state.coordinator.begin_restore()?;
+        publish_recording_state(app, state);
+        Ok(Self { state, app })
+    }
+}
+impl Drop for RestoreCaptureGuard<'_> {
+    fn drop(&mut self) {
+        {
+            let mut core = self.state.coordinator.lock();
+            core.end_restore();
+            self.state.coordinator.cache_snapshot(&core);
+        }
+        self.state.coordinator.notify();
+        publish_recording_state(self.app, self.state);
+    }
+}
+
+fn set_pause_internal(state: &SharedState, is_paused: bool, app: Option<&AppHandle>) -> Result<(), String> {
+    change_pause_internal(state, Some(is_paused), app)
+}
+
+fn change_pause_internal(state: &SharedState, requested: Option<bool>, app: Option<&AppHandle>) -> Result<(), String> {
+    {
+        let mut core = state.coordinator.lock();
+        let settings = with_connection(state, |conn| {
+            let mut settings = read_settings(conn)?;
+            settings.is_paused = requested.unwrap_or(!settings.is_paused);
+            write_settings(conn, &settings)?;
+            Ok(settings)
+        })?;
+        apply_recording_settings_locked(state, &mut core, settings);
+    }
+    if let Some(app) = app { publish_recording_state(app, state); }
     Ok(())
 }
 
-fn start_capture_worker(app: AppHandle, state: SharedState) {
-    std::thread::spawn(move || {
-        loop {
-            let settings = with_connection(&state, read_settings);
-
-            if let Ok(current_settings) = settings {
-                state
-                    .pause_state
-                    .store(current_settings.is_paused, Ordering::Relaxed);
-
-                if !current_settings.is_paused {
-                    match capture_once(&state) {
-                        Ok(CaptureRunResult::Captured) => {
-                            let _ = app.emit("captures-updated", ());
-                        }
-                        Ok(CaptureRunResult::CapturedWithPolicy(payload)) => {
-                            let _ = app.emit("captures-updated", ());
-                            if payload.mode == "pause" {
-                                let _ = app.emit("pause-state-changed", PauseStatePayload { is_paused: true });
-                            }
-                            let _ = app.emit("capture-suppressed", payload);
-                        }
-                        Ok(CaptureRunResult::Suppressed(payload)) => {
-                            if payload.mode == "pause" {
-                                let _ = app.emit("pause-state-changed", PauseStatePayload { is_paused: true });
-                            }
-                            let _ = app.emit("capture-suppressed", payload);
-                        }
-                        Err(error) => {
-                            let payload = record_capture_error(&state, error);
-                            let _ = app.emit("capture-error", payload);
-                        }
-                    }
-                }
-
-                let sleep_seconds = (current_settings.interval_minutes.max(1) * 60) as u64;
-                std::thread::sleep(Duration::from_secs(sleep_seconds));
-            } else {
-                std::thread::sleep(Duration::from_secs(20));
-            }
+fn report_capture_result(app: &AppHandle, state: &SharedState, result: Result<CaptureRunResult, String>) -> Result<(), String> {
+    match result {
+        Ok(CaptureRunResult::Captured) => { let _ = app.emit("captures-updated", ()); Ok(()) }
+        Ok(CaptureRunResult::CapturedWithPolicy(payload)) => {
+            let _ = app.emit("captures-updated", ()); let _ = app.emit("capture-suppressed", payload); Ok(())
         }
-    });
+        Ok(CaptureRunResult::Suppressed(payload)) => {
+            clear_capture_error_state(state);
+            let reason = payload.reason.clone(); let _ = app.emit("capture-suppressed", payload); Err(reason)
+        }
+        Err(error) => { let _ = app.emit("capture-error", record_capture_error(state, error.clone())); Err(error) }
+    }
+}
+
+fn start_capture_worker(app: AppHandle, state: SharedState) -> Result<(), String> {
+    let coordinator = state.coordinator.clone();
+    let worker = std::thread::Builder::new().name("memorylane-capture".into()).spawn(move || {
+        let mut tracker = None;
+        while let Some(work) = state.coordinator.wait_next_with_idle(|paused| {
+            // Park without SQLite reads, timers, or window-event tracking while paused.
+            if paused { tracker = None; }
+        }) {
+            publish_recording_state(&app, &state);
+            if work.ticket.intent == coordinator::CaptureIntent::Maintenance {
+                let reconcile = state.coordinator.take_reconciliation();
+                let invalidated = storage::run_maintenance(&state, reconcile);
+                let _ = app.emit("captures-updated", serde_json::json!({ "contentInvalidated": invalidated }));
+                { let mut core = state.coordinator.lock(); core.finish(&work.ticket, Instant::now()); state.coordinator.cache_snapshot(&core); }
+                state.coordinator.notify();
+                publish_recording_state(&app, &state);
+                continue;
+            }
+            if tracker.is_none() { tracker = privacy::Tracker::start().ok(); }
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(||
+                capture_once(&state, &work.ticket, Some(&app))))
+                .unwrap_or_else(|_| Err("Capture worker recovered from a panic.".to_string()));
+            {
+                let mut core = state.coordinator.lock();
+                core.finish(&work.ticket, Instant::now());
+                state.coordinator.cache_snapshot(&core);
+            }
+            state.coordinator.notify();
+            let reply = report_capture_result(&app, &state, result);
+            if let Some(sender) = work.reply { let _ = sender.try_send(reply); }
+            publish_recording_state(&app, &state);
+        }
+    }).map_err(|e| format!("Cannot start capture worker: {e}"))?;
+    coordinator.attach_worker(worker);
+    Ok(())
 }
 
 const TRAY_ID: &str = "memorylane-tray";
@@ -2943,39 +2700,30 @@ fn setup_tray(app: &AppHandle) -> Result<(), String> {
                 show_main_window(app);
             }
             "toggle_pause" => {
-                let state = app.state::<SharedState>();
-                let next_state = !state.pause_state.load(Ordering::Relaxed);
-                if set_pause_internal(&state, next_state).is_ok() {
-                    let _ = app.emit("pause-state-changed", PauseStatePayload { is_paused: next_state });
-                }
+                let state = app.state::<SharedState>().inner().clone();
+                let app = app.clone();
+                let error_app = app.clone();
+                let controls = state.controls.clone();
+                tauri::async_runtime::spawn(async move {
+                    let result = coordinator::run_blocking(&controls, move || {
+                        change_pause_internal(&state, None, Some(&app))
+                    }).await;
+                    if let Err(error) = result {
+                        let _ = error_app.emit("capture-error", CaptureErrorEventPayload { message: format!("Recording state could not be changed: {error}") });
+                    }
+                });
             }
             "open_folder" => {
-                let state = app.state::<SharedState>();
-                let _ = Command::new("explorer").arg(&state.capture_dir).spawn();
+                let state = app.state::<SharedState>().inner().clone();
+                let admission = state.commands.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = coordinator::run_blocking(&admission, move || open_captures_folder_internal(&state)).await;
+                });
             }
             "capture_now" => {
                 let state = app.state::<SharedState>();
-                match capture_once(&state) {
-                    Ok(CaptureRunResult::Captured) => {
-                        let _ = app.emit("captures-updated", ());
-                    }
-                    Ok(CaptureRunResult::CapturedWithPolicy(payload)) => {
-                        let _ = app.emit("captures-updated", ());
-                        if payload.mode == "pause" {
-                            let _ = app.emit("pause-state-changed", PauseStatePayload { is_paused: true });
-                        }
-                        let _ = app.emit("capture-suppressed", payload);
-                    }
-                    Ok(CaptureRunResult::Suppressed(payload)) => {
-                        if payload.mode == "pause" {
-                            let _ = app.emit("pause-state-changed", PauseStatePayload { is_paused: true });
-                        }
-                        let _ = app.emit("capture-suppressed", payload);
-                    }
-                    Err(error) => {
-                        let payload = record_capture_error(&state, error);
-                        let _ = app.emit("capture-error", payload);
-                    }
+                if let Err(message) = state.coordinator.request_manual() {
+                    let _ = app.emit("capture-error", CaptureErrorEventPayload { message });
                 }
             }
             "quit_app" => {
@@ -3000,13 +2748,14 @@ fn setup_tray(app: &AppHandle) -> Result<(), String> {
 
     // Every pause change (UI, tray menu, policy auto-pause) emits this event.
     let listener_app = app.clone();
-    app.listen_any("pause-state-changed", move |event| {
-        let is_paused = serde_json::from_str::<serde_json::Value>(event.payload())
-            .ok()
-            .and_then(|payload| payload.get("isPaused").and_then(|value| value.as_bool()));
-        if let Some(is_paused) = is_paused {
-            sync_tray_pause_state(&listener_app, is_paused);
-        }
+    app.listen_any("pause-state-changed", move |_| {
+        let update_app = listener_app.clone();
+        // Tray setters synchronously dispatch to the main thread. Queue the update without
+        // waiting here, or main-thread shutdown joining the worker can deadlock publication.
+        let _ = listener_app.run_on_main_thread(move || {
+            let paused = update_app.state::<SharedState>().pause_state.load(Ordering::Acquire);
+            sync_tray_pause_state(&update_app, paused);
+        });
     });
 
     Ok(())
@@ -3018,7 +2767,13 @@ fn get_storage_path(state: State<SharedState>) -> String {
 }
 
 #[tauri::command]
-fn open_captures_folder(state: State<SharedState>) -> Result<(), String> {
+async fn open_captures_folder(state: State<'_, SharedState>) -> Result<(), String> {
+    let owned = state.inner().clone();
+    let admission = owned.commands.clone();
+    coordinator::run_blocking(&admission, move || { open_captures_folder_internal(&owned) }).await
+}
+
+fn open_captures_folder_internal(state: &SharedState) -> Result<(), String> {
     Command::new("explorer")
         .arg(&state.capture_dir)
         .spawn()
@@ -3027,13 +2782,19 @@ fn open_captures_folder(state: State<SharedState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn get_settings(state: State<SharedState>) -> Result<SettingsPayload, String> {
+async fn get_settings(state: State<'_, SharedState>) -> Result<SettingsPayload, String> {
+    let owned = state.inner().clone();
+    let admission = owned.commands.clone();
+    coordinator::run_blocking(&admission, move || { get_settings_internal(&owned) }).await
+}
+
+fn get_settings_internal(state: &SharedState) -> Result<SettingsPayload, String> {
     with_connection(&state, |conn| read_settings(conn).map(settings_to_payload))
 }
 
 #[tauri::command]
-fn update_settings(
-    state: State<SharedState>,
+async fn update_settings(
+    state: State<'_, SharedState>,
     app: AppHandle,
     interval_minutes: Option<i64>,
     retention_days: Option<i64>,
@@ -3047,6 +2808,27 @@ fn update_settings(
     sensitive_window_keywords: Option<Vec<String>>,
     sensitive_capture_mode: Option<String>,
 ) -> Result<SettingsPayload, String> {
+    let owned = state.inner().clone();
+    let admission = owned.controls.clone();
+    coordinator::run_blocking(&admission, move || { update_settings_internal(&owned, app, interval_minutes, retention_days, storage_cap_gb, startup_on_boot, theme_id, excluded_processes, excluded_window_keywords, pause_processes, pause_window_keywords, sensitive_window_keywords, sensitive_capture_mode) }).await
+}
+
+fn update_settings_internal(
+    state: &SharedState,
+    app: AppHandle,
+    interval_minutes: Option<i64>,
+    retention_days: Option<i64>,
+    storage_cap_gb: Option<f64>,
+    startup_on_boot: Option<bool>,
+    theme_id: Option<String>,
+    excluded_processes: Option<Vec<String>>,
+    excluded_window_keywords: Option<Vec<String>>,
+    pause_processes: Option<Vec<String>>,
+    pause_window_keywords: Option<Vec<String>>,
+    sensitive_window_keywords: Option<Vec<String>>,
+    sensitive_capture_mode: Option<String>,
+) -> Result<SettingsPayload, String> {
+    let mut core = state.coordinator.lock();
     let updated = with_connection(&state, |conn| {
         let mut settings = read_settings(conn)?;
 
@@ -3104,13 +2886,26 @@ fn update_settings(
         Ok(settings)
     })?;
 
-    apply_retention_rules(&state)?;
+    apply_recording_settings_locked(&state, &mut core, updated.clone());
+    drop(core);
+    publish_recording_state(&app, &state);
+    state.coordinator.request_maintenance(false);
     Ok(settings_to_payload(updated))
 }
 
 #[tauri::command]
-fn set_startup_on_boot(
-    state: State<SharedState>,
+async fn set_startup_on_boot(
+    state: State<'_, SharedState>,
+    app: AppHandle,
+    enabled: bool,
+) -> Result<SettingsPayload, String> {
+    let owned = state.inner().clone();
+    let admission = owned.controls.clone();
+    coordinator::run_blocking(&admission, move || { set_startup_on_boot_internal(&owned, app, enabled) }).await
+}
+
+fn set_startup_on_boot_internal(
+    state: &SharedState,
     app: AppHandle,
     enabled: bool,
 ) -> Result<SettingsPayload, String> {
@@ -3131,11 +2926,15 @@ fn set_startup_on_boot(
 }
 
 #[tauri::command]
-fn set_pause_state(state: State<SharedState>, app: AppHandle, is_paused: bool) -> Result<PauseStatePayload, String> {
-    set_pause_internal(&state, is_paused)?;
-    app.emit("pause-state-changed", PauseStatePayload { is_paused })
-        .map_err(|error| format!("failed to emit pause state event: {error}"))?;
-    Ok(PauseStatePayload { is_paused })
+async fn set_pause_state(state: State<'_, SharedState>, app: AppHandle, is_paused: bool) -> Result<coordinator::RecordingStatePayload, String> {
+    let owned = state.inner().clone();
+    let admission = owned.controls.clone();
+    coordinator::run_blocking(&admission, move || { set_pause_state_internal(&owned, app, is_paused) }).await
+}
+
+fn set_pause_state_internal(state: &SharedState, app: AppHandle, is_paused: bool) -> Result<coordinator::RecordingStatePayload, String> {
+    set_pause_internal(&state, is_paused, Some(&app))?;
+    Ok(state.coordinator.snapshot())
 }
 
 #[tauri::command]
@@ -3194,44 +2993,25 @@ fn get_pause_state(state: State<SharedState>) -> PauseStatePayload {
 }
 
 #[tauri::command]
-fn capture_now(state: State<SharedState>, app: AppHandle) -> Result<(), String> {
-    match capture_once(&state) {
-        Ok(CaptureRunResult::Captured) => {
-            app.emit("captures-updated", ())
-                .map_err(|error| format!("failed to emit capture update event: {error}"))?;
-            Ok(())
-        }
-        Ok(CaptureRunResult::CapturedWithPolicy(payload)) => {
-            app.emit("captures-updated", ())
-                .map_err(|error| format!("failed to emit capture update event: {error}"))?;
-            if payload.mode == "pause" {
-                app.emit("pause-state-changed", PauseStatePayload { is_paused: true })
-                    .map_err(|error| format!("failed to emit pause state event: {error}"))?;
-            }
-            app.emit("capture-suppressed", payload)
-                .map_err(|error| format!("failed to emit capture suppression event: {error}"))?;
-            Ok(())
-        }
-        Ok(CaptureRunResult::Suppressed(payload)) => {
-            if payload.mode == "pause" {
-                app.emit("pause-state-changed", PauseStatePayload { is_paused: true })
-                    .map_err(|error| format!("failed to emit pause state event: {error}"))?;
-            }
-            app.emit("capture-suppressed", payload)
-                .map_err(|error| format!("failed to emit capture suppression event: {error}"))?;
-            Ok(())
-        }
-        Err(error) => {
-            let payload = record_capture_error(&state, error.clone());
-            app.emit("capture-error", payload)
-                .map_err(|emit_error| format!("failed to emit capture error event: {emit_error}"))?;
-            Err(error)
-        }
-    }
+async fn capture_now(state: State<'_, SharedState>, app: AppHandle) -> Result<(), String> {
+    let mut reply = state.coordinator.request_manual()?;
+    publish_recording_state(&app, &state);
+    reply.recv().await.ok_or_else(|| "Capture worker stopped before completing the request.".to_string())?
 }
 
 #[tauri::command]
-fn get_day_summaries(state: State<SharedState>) -> Result<Vec<DaySummaryPayload>, String> {
+fn get_recording_state(state: State<'_, SharedState>) -> coordinator::RecordingStatePayload {
+    state.coordinator.recording_state()
+}
+
+#[tauri::command]
+async fn get_day_summaries(state: State<'_, SharedState>) -> Result<Vec<DaySummaryPayload>, String> {
+    let owned = state.inner().clone();
+    let admission = owned.commands.clone();
+    coordinator::run_blocking(&admission, move || { get_day_summaries_internal(&owned) }).await
+}
+
+fn get_day_summaries_internal(state: &SharedState) -> Result<Vec<DaySummaryPayload>, String> {
     with_connection(&state, |conn| {
         let mut stmt = conn
             .prepare(
@@ -3275,8 +3055,19 @@ fn get_day_summaries(state: State<SharedState>) -> Result<Vec<DaySummaryPayload>
 }
 
 #[tauri::command]
-fn get_day_captures(
-    state: State<SharedState>,
+async fn get_day_captures(
+    state: State<'_, SharedState>,
+    day_key: String,
+    offset: Option<i64>,
+    limit: Option<i64>,
+) -> Result<Vec<DayCapturePayload>, String> {
+    let owned = state.inner().clone();
+    let admission = owned.commands.clone();
+    coordinator::run_blocking(&admission, move || { get_day_captures_internal(&owned, day_key, offset, limit) }).await
+}
+
+fn get_day_captures_internal(
+    state: &SharedState,
     day_key: String,
     offset: Option<i64>,
     limit: Option<i64>,
@@ -3431,7 +3222,13 @@ fn load_day_captures_page(
 }
 
 #[tauri::command]
-fn get_total_capture_count(state: State<SharedState>) -> Result<i64, String> {
+async fn get_total_capture_count(state: State<'_, SharedState>) -> Result<i64, String> {
+    let owned = state.inner().clone();
+    let admission = owned.commands.clone();
+    coordinator::run_blocking(&admission, move || { get_total_capture_count_internal(&owned) }).await
+}
+
+fn get_total_capture_count_internal(state: &SharedState) -> Result<i64, String> {
     with_connection(&state, |conn| {
         conn.query_row("SELECT COUNT(*) FROM captures", [], |row| row.get::<_, i64>(0))
             .map_err(|error| format!("failed to get total capture count: {error}"))
@@ -3439,8 +3236,18 @@ fn get_total_capture_count(state: State<SharedState>) -> Result<i64, String> {
 }
 
 #[tauri::command]
-fn get_all_captures_page(
-    state: State<SharedState>,
+async fn get_all_captures_page(
+    state: State<'_, SharedState>,
+    offset: Option<i64>,
+    limit: Option<i64>,
+) -> Result<Vec<DayCapturePayload>, String> {
+    let owned = state.inner().clone();
+    let admission = owned.commands.clone();
+    coordinator::run_blocking(&admission, move || { get_all_captures_page_internal(&owned, offset, limit) }).await
+}
+
+fn get_all_captures_page_internal(
+    state: &SharedState,
     offset: Option<i64>,
     limit: Option<i64>,
 ) -> Result<Vec<DayCapturePayload>, String> {
@@ -3549,8 +3356,18 @@ fn get_all_captures_page(
 }
 
 #[tauri::command]
-fn search_captures(
-    state: State<SharedState>,
+async fn search_captures(
+    state: State<'_, SharedState>,
+    query: String,
+    limit: Option<i64>,
+) -> Result<Vec<RetrievalSearchResultPayload>, String> {
+    let owned = state.inner().clone();
+    let admission = owned.commands.clone();
+    coordinator::run_blocking(&admission, move || { search_captures_internal(&owned, query, limit) }).await
+}
+
+fn search_captures_internal(
+    state: &SharedState,
     query: String,
     limit: Option<i64>,
 ) -> Result<Vec<RetrievalSearchResultPayload>, String> {
@@ -4018,8 +3835,17 @@ fn search_captures(
 }
 
 #[tauri::command]
-fn get_day_intelligence(
-    state: State<SharedState>,
+async fn get_day_intelligence(
+    state: State<'_, SharedState>,
+    day_key: String,
+) -> Result<DayIntelligencePayload, String> {
+    let owned = state.inner().clone();
+    let admission = owned.commands.clone();
+    coordinator::run_blocking(&admission, move || { get_day_intelligence_internal(&owned, day_key) }).await
+}
+
+fn get_day_intelligence_internal(
+    state: &SharedState,
     day_key: String,
 ) -> Result<DayIntelligencePayload, String> {
     let started = Instant::now();
@@ -4096,7 +3922,14 @@ fn get_performance_snapshot(state: State<SharedState>) -> PerformanceSnapshotPay
 }
 
 #[tauri::command]
-fn export_encrypted_backup(state: State<SharedState>, passphrase: String) -> Result<String, String> {
+async fn export_encrypted_backup(state: State<'_, SharedState>, passphrase: String) -> Result<String, String> {
+    let owned = state.inner().clone();
+    let admission = owned.commands.clone();
+    let backup_permit = owned.backups.enter()?;
+    coordinator::run_blocking(&admission, move || { let _backup_permit = backup_permit; export_encrypted_backup_internal(&owned, passphrase) }).await
+}
+
+fn export_encrypted_backup_internal(state: &SharedState, passphrase: String) -> Result<String, String> {
     let settings = with_connection(&state, read_settings)?;
 
     let capture_rows = with_connection(&state, |conn| {
@@ -4268,8 +4101,20 @@ fn export_encrypted_backup(state: State<SharedState>, passphrase: String) -> Res
 }
 
 #[tauri::command]
-fn import_encrypted_backup(
-    state: State<SharedState>,
+async fn import_encrypted_backup(
+    state: State<'_, SharedState>,
+    app: AppHandle,
+    backup_path: String,
+    passphrase: String,
+) -> Result<ImportBackupPayload, String> {
+    let owned = state.inner().clone();
+    let admission = owned.commands.clone();
+    let backup_permit = owned.backups.enter()?;
+    coordinator::run_blocking(&admission, move || { let _backup_permit = backup_permit; import_encrypted_backup_internal(&owned, app, backup_path, passphrase) }).await
+}
+
+fn import_encrypted_backup_internal(
+    state: &SharedState,
     app: AppHandle,
     backup_path: String,
     passphrase: String,
@@ -4287,17 +4132,22 @@ fn import_encrypted_backup(
         ));
     }
 
+    // Reject all imported keys and paths before staging or modifying live files/rows.
+    for capture in &bundle.captures {
+        validate_day_key(&capture.day_key)?;
+        normalize_backup_relative_path(&capture.relative_image_path)?;
+        normalize_backup_relative_path(&capture.relative_thumbnail_path)?;
+    }
+    validate_capture_root_tree(&state.capture_dir)?;
+
     let restore_staging_dir = state
         .capture_dir
         .parent()
         .unwrap_or(&state.capture_dir)
-        .join(format!("captures_restore_staging_{}", Local::now().timestamp()));
+        .join(format!("captures_restore_staging_{}", Local::now().timestamp_nanos_opt().unwrap_or_default()));
 
-    if restore_staging_dir.exists() {
-        fs::remove_dir_all(&restore_staging_dir)
-            .map_err(|error| format!("failed to clear restore staging directory: {error}"))?;
-    }
-    fs::create_dir_all(&restore_staging_dir)
+    // A collision is an error; never recursively delete a preexisting staging path.
+    fs::create_dir(&restore_staging_dir)
         .map_err(|error| format!("failed to create restore staging directory: {error}"))?;
 
     for capture in &bundle.captures {
@@ -4314,6 +4164,8 @@ fn import_encrypted_backup(
             fs::create_dir_all(parent)
                 .map_err(|error| format!("failed to create restored thumbnail parent: {error}"))?;
         }
+        validate_managed_path(&restore_staging_dir, &image_path)?;
+        validate_managed_path(&restore_staging_dir, &thumbnail_path)?;
 
         let image_bytes = BASE64
             .decode(capture.image_data_base64.as_bytes())
@@ -4328,7 +4180,11 @@ fn import_encrypted_backup(
             .map_err(|error| format!("failed writing restored thumbnail file: {error}"))?;
     }
 
-    with_connection(&state, |conn| {
+    let _capture_guard = RestoreCaptureGuard::begin(state, &app)?;
+    let _storage = storage::gate(state);
+    storage::validate_restore_cleanup(state)?;
+    let mut core = state.coordinator.lock();
+    let restored_settings = with_connection(&state, |conn| {
         let transaction = conn
             .unchecked_transaction()
             .map_err(|error| format!("failed to open backup restore transaction: {error}"))?;
@@ -4504,25 +4360,28 @@ fn import_encrypted_backup(
                 .map_err(|error| format!("failed restoring capture annotation row: {error}"))?;
         }
 
+        transaction.execute("UPDATE storage_accounting SET reconciled=0 WHERE id=1", []).map_err(|e| e.to_string())?;
         transaction
             .commit()
             .map_err(|error| format!("failed to commit backup restore transaction: {error}"))?;
 
-        Ok(())
+        read_settings(conn)
     })?;
+    // Synchronize and invalidate active tickets at the settings commit boundary, even
+    // if the later directory swap fails (recoverable swaps are handled in unit 5).
+    apply_recording_settings_locked(&state, &mut core, restored_settings);
+    drop(core);
+    publish_recording_state(&app, &state);
 
     if state.capture_dir.exists() {
-        fs::remove_dir_all(&state.capture_dir)
-            .map_err(|error| format!("failed clearing existing capture directory before restore: {error}"))?;
+        remove_capture_root_tree(&state.capture_dir)?;
     }
     fs::rename(&restore_staging_dir, &state.capture_dir)
         .map_err(|error| format!("failed finalizing restored capture directory: {error}"))?;
 
-    state
-        .pause_state
-        .store(bundle.settings.is_paused, Ordering::Relaxed);
+    storage::after_import(state)?;
     bump_indexing_epoch(&state);
-    app.emit("captures-updated", ())
+    app.emit("captures-updated", serde_json::json!({ "contentInvalidated": true }))
         .map_err(|error| format!("failed to emit capture update after restore: {error}"))?;
 
     let day_count = bundle
@@ -4540,8 +4399,18 @@ fn import_encrypted_backup(
 }
 
 #[tauri::command]
-fn get_capture_context_page(
-    state: State<SharedState>,
+async fn get_capture_context_page(
+    state: State<'_, SharedState>,
+    capture_id: i64,
+    page_size: Option<i64>,
+) -> Result<CaptureContextPagePayload, String> {
+    let owned = state.inner().clone();
+    let admission = owned.commands.clone();
+    coordinator::run_blocking(&admission, move || { get_capture_context_page_internal(&owned, capture_id, page_size) }).await
+}
+
+fn get_capture_context_page_internal(
+    state: &SharedState,
     capture_id: i64,
     page_size: Option<i64>,
 ) -> Result<CaptureContextPagePayload, String> {
@@ -4593,7 +4462,13 @@ fn get_capture_context_page(
 }
 
 #[tauri::command]
-fn get_capture_image(state: State<SharedState>, capture_id: i64) -> Result<CaptureImagePayload, String> {
+async fn get_capture_image(state: State<'_, SharedState>, capture_id: i64) -> Result<CaptureImagePayload, String> {
+    let owned = state.inner().clone();
+    let admission = owned.commands.clone();
+    coordinator::run_blocking(&admission, move || { get_capture_image_internal(&owned, capture_id) }).await
+}
+
+fn get_capture_image_internal(state: &SharedState, capture_id: i64) -> Result<CaptureImagePayload, String> {
     let image_path = with_connection(&state, |conn| {
         conn.query_row(
             "SELECT image_path FROM captures WHERE id = ?",
@@ -4610,8 +4485,19 @@ fn get_capture_image(state: State<SharedState>, capture_id: i64) -> Result<Captu
 }
 
 #[tauri::command]
-fn update_capture_note(
-    state: State<SharedState>,
+async fn update_capture_note(
+    state: State<'_, SharedState>,
+    app: AppHandle,
+    capture_id: i64,
+    note: String,
+) -> Result<(), String> {
+    let owned = state.inner().clone();
+    let admission = owned.commands.clone();
+    coordinator::run_blocking(&admission, move || { update_capture_note_internal(&owned, app, capture_id, note) }).await
+}
+
+fn update_capture_note_internal(
+    state: &SharedState,
     app: AppHandle,
     capture_id: i64,
     note: String,
@@ -4828,8 +4714,21 @@ fn load_review_shortcuts_internal(state: &SharedState, limit: i64) -> Result<Rev
 }
 
 #[tauri::command]
-fn set_capture_review_state(
-    state: State<SharedState>,
+async fn set_capture_review_state(
+    state: State<'_, SharedState>,
+    app: AppHandle,
+    capture_id: i64,
+    is_bookmarked: Option<bool>,
+    is_favorite: Option<bool>,
+    tags: Option<Vec<String>>,
+) -> Result<CaptureReviewPayload, String> {
+    let owned = state.inner().clone();
+    let admission = owned.commands.clone();
+    coordinator::run_blocking(&admission, move || { set_capture_review_state_internal(&owned, app, capture_id, is_bookmarked, is_favorite, tags) }).await
+}
+
+fn set_capture_review_state_internal(
+    state: &SharedState,
     app: AppHandle,
     capture_id: i64,
     is_bookmarked: Option<bool>,
@@ -4889,22 +4788,53 @@ fn set_capture_review_state(
 }
 
 #[tauri::command]
-fn get_review_shortcuts(
-    state: State<SharedState>,
+async fn get_review_shortcuts(
+    state: State<'_, SharedState>,
+    limit: Option<i64>,
+) -> Result<ReviewShortcutsPayload, String> {
+    let owned = state.inner().clone();
+    let admission = owned.commands.clone();
+    coordinator::run_blocking(&admission, move || { get_review_shortcuts_internal(&owned, limit) }).await
+}
+
+fn get_review_shortcuts_internal(
+    state: &SharedState,
     limit: Option<i64>,
 ) -> Result<ReviewShortcutsPayload, String> {
     load_review_shortcuts_internal(&state, limit.unwrap_or(12))
 }
 
 #[tauri::command]
-fn redact_capture(
-    state: State<SharedState>,
+async fn redact_capture(
+    state: State<'_, SharedState>,
     app: AppHandle,
     capture_id: i64,
     redact_image: Option<bool>,
     redact_metadata: Option<bool>,
     clear_note: Option<bool>,
 ) -> Result<(), String> {
+    let owned = state.inner().clone();
+    let admission = owned.commands.clone();
+    coordinator::run_blocking(&admission, move || { redact_capture_internal(&owned, app, capture_id, redact_image, redact_metadata, clear_note) }).await
+}
+
+fn redact_capture_internal(
+    state: &SharedState,
+    app: AppHandle,
+    capture_id: i64,
+    redact_image: Option<bool>,
+    redact_metadata: Option<bool>,
+    clear_note: Option<bool>,
+) -> Result<(), String> {
+    let _storage = storage::gate(state);
+    with_connection(state, |conn| {
+        storage::touch_content(conn,capture_id)?;
+        if redact_image.unwrap_or(true) {
+            conn.execute("UPDATE storage_accounting SET reconciled=0 WHERE id=1", []).map_err(|e|e.to_string())?;
+        }
+        Ok(())
+    })?;
+    state.coordinator.request_maintenance(redact_image.unwrap_or(true));
     let redact_image = redact_image.unwrap_or(true);
     let redact_metadata = redact_metadata.unwrap_or(true);
     let clear_note = clear_note.unwrap_or(false);
@@ -4925,8 +4855,12 @@ fn redact_capture(
     })?;
 
     if redact_image {
+        validate_managed_path(&state.capture_dir, Path::new(&image_path))?;
+        validate_managed_path(&state.capture_dir, Path::new(&thumbnail_path))?;
         redact_image_file(&image_path)?;
         redact_image_file(&thumbnail_path)?;
+        with_connection(state, |conn| { storage::record_live(conn,Path::new(&image_path))?;
+            storage::record_live(conn,Path::new(&thumbnail_path)) })?;
     }
 
     with_connection(&state, |conn| {
@@ -4987,7 +4921,7 @@ fn redact_capture(
     })?;
 
     bump_indexing_epoch(&state);
-    app.emit("captures-updated", ())
+    app.emit("captures-updated", serde_json::json!({ "contentInvalidated": true }))
         .map_err(|error| format!("failed to emit capture update event after redaction: {error}"))?;
 
     Ok(())
@@ -4999,13 +4933,23 @@ fn get_capture_health(state: State<SharedState>) -> CaptureHealthPayload {
 }
 
 #[tauri::command]
-fn get_ocr_health() -> OcrHealthPayload {
-    ocr_health_payload()
+async fn get_ocr_health(state: State<'_, SharedState>) -> Result<OcrHealthPayload, String> {
+    let admission = state.commands.clone();
+    coordinator::run_blocking(&admission, || Ok(ocr_health_payload())).await
 }
 
 #[tauri::command]
-fn reindex_all_captures(
-    state: State<SharedState>,
+async fn reindex_all_captures(
+    state: State<'_, SharedState>,
+    app: AppHandle,
+) -> Result<ReindexCapturesPayload, String> {
+    let owned = state.inner().clone();
+    let admission = owned.commands.clone();
+    coordinator::run_blocking(&admission, move || { reindex_all_captures_internal(&owned, app) }).await
+}
+
+fn reindex_all_captures_internal(
+    state: &SharedState,
     app: AppHandle,
 ) -> Result<ReindexCapturesPayload, String> {
     if resolve_tesseract_executable().is_none() {
@@ -5074,7 +5018,7 @@ fn reindex_all_captures(
         .map_err(|error| format!("failed to emit capture update event after reindex: {error}"))?;
 
     let queued_count = capture_ids.len() as i64;
-    let worker_state = state.inner().clone();
+    let worker_state = state.clone();
     std::thread::spawn(move || {
         for capture_id in capture_ids {
             let _ = run_capture_index_job(&worker_state, capture_id);
@@ -5088,47 +5032,54 @@ fn reindex_all_captures(
 }
 
 #[tauri::command]
-fn get_storage_stats(state: State<SharedState>) -> Result<StorageStatsPayload, String> {
-    let used_bytes = directory_size(&state.capture_dir)?;
-    let used_gb = used_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+async fn get_storage_stats(state: State<'_, SharedState>) -> Result<StorageStatsPayload, String> {
+    let owned = state.inner().clone();
+    let admission = owned.commands.clone();
+    coordinator::run_blocking(&admission, move || { get_storage_stats_internal(&owned) }).await
+}
 
-    let (capture_count, cap_gb) = with_connection(&state, |conn| {
-        let count = conn
-            .query_row("SELECT COUNT(*) FROM captures", [], |row| row.get::<_, i64>(0))
-            .map_err(|error| format!("failed to count captures: {error}"))?;
-        let settings = read_settings(conn)?;
-        Ok((count, settings.storage_cap_gb))
-    })?;
-
-    let usage_percent = if cap_gb > 0.0 {
-        (used_gb / cap_gb * 100.0).min(100.0)
-    } else {
-        0.0
-    };
-
-    Ok(StorageStatsPayload {
-        used_bytes,
-        used_gb,
-        storage_cap_gb: cap_gb,
-        usage_percent,
-        capture_count,
+fn get_storage_stats_internal(state: &SharedState) -> Result<StorageStatsPayload, String> {
+    with_connection(state, |conn| {
+        let (used_bytes,pending_cleanup_bytes,untracked_bytes,capture_count,accounting_ready,last_storage_error) =
+            conn.query_row("SELECT used_bytes,pending_bytes,untracked_bytes,capture_count,reconciled,
+                coalesce(maintenance_error,last_error,(SELECT last_error FROM managed_files WHERE last_error IS NOT NULL LIMIT 1))
+                FROM storage_accounting WHERE id=1",[],|r|Ok((r.get::<_,u64>(0)?,r.get::<_,u64>(1)?,r.get::<_,u64>(2)?,
+                    r.get::<_,i64>(3)?,r.get::<_,bool>(4)?,r.get::<_,Option<String>>(5)?))).map_err(|e|e.to_string())?;
+        let pending_cleanup_count = conn.query_row("SELECT count(*) FROM managed_files WHERE state IN ('pending','staging')",[],|r|r.get(0)).map_err(|e|e.to_string())?;
+        let cap_gb = read_settings(conn)?.storage_cap_gb;
+        let used_gb = used_bytes as f64/(1024.0*1024.0*1024.0);
+        Ok(StorageStatsPayload { used_bytes,used_gb,storage_cap_gb:cap_gb,
+            usage_percent:if cap_gb>0.0 {(used_gb/cap_gb*100.0).min(100.0)} else {0.0},capture_count,
+            pending_cleanup_bytes,pending_cleanup_count,untracked_bytes,accounting_ready,last_storage_error })
     })
 }
 
 #[tauri::command]
-fn delete_day(state: State<SharedState>, day_key: String, app: AppHandle) -> Result<DeleteDayPayload, String> {
+async fn delete_day(state: State<'_, SharedState>, day_key: String, app: AppHandle) -> Result<DeleteDayPayload, String> {
+    let owned = state.inner().clone();
+    let admission = owned.commands.clone();
+    coordinator::run_blocking(&admission, move || { delete_day_command_internal(&owned, day_key, app) }).await
+}
+
+fn delete_day_command_internal(state: &SharedState, day_key: String, app: AppHandle) -> Result<DeleteDayPayload, String> {
     let payload = delete_day_internal(&state, &day_key)?;
     bump_indexing_epoch(&state);
-    app.emit("captures-updated", ())
+    app.emit("captures-updated", serde_json::json!({ "contentInvalidated": true }))
         .map_err(|error| format!("failed to emit capture update event: {error}"))?;
     Ok(payload)
 }
 
 #[tauri::command]
-fn delete_capture(state: State<SharedState>, capture_id: i64, app: AppHandle) -> Result<DeleteCapturePayload, String> {
+async fn delete_capture(state: State<'_, SharedState>, capture_id: i64, app: AppHandle) -> Result<DeleteCapturePayload, String> {
+    let owned = state.inner().clone();
+    let admission = owned.commands.clone();
+    coordinator::run_blocking(&admission, move || { delete_capture_command_internal(&owned, capture_id, app) }).await
+}
+
+fn delete_capture_command_internal(state: &SharedState, capture_id: i64, app: AppHandle) -> Result<DeleteCapturePayload, String> {
     let payload = delete_capture_internal(&state, capture_id)?;
     bump_indexing_epoch(&state);
-    app.emit("captures-updated", ())
+    app.emit("captures-updated", serde_json::json!({ "contentInvalidated": true }))
         .map_err(|error| format!("failed to emit capture update event: {error}"))?;
     Ok(payload)
 }
@@ -5141,6 +5092,7 @@ pub fn run() {
         .setup(|app| {
             let app_handle = app.handle().clone();
             let app_data_dir = resolve_app_data_dir(&app_handle)?;
+            let archive_lock = storage::lock_archive(&app_data_dir)?;
             migrate_legacy_app_data_if_needed(&app_data_dir)?;
 
             let capture_dir = app_data_dir.join("captures");
@@ -5175,8 +5127,15 @@ pub fn run() {
                 search_cache: Arc::new(Mutex::new(HashMap::new())),
                 intelligence_cache: Arc::new(Mutex::new(HashMap::new())),
                 performance_stats: Arc::new(Mutex::new(PerformanceStats::default())),
+                coordinator: Arc::new(coordinator::CaptureCoordinator::new(current_settings.clone())),
+                commands: Arc::new(coordinator::CommandAdmission::new(8)),
+                controls: Arc::new(coordinator::CommandAdmission::new(2)),
+                backups: Arc::new(coordinator::CommandAdmission::new(1)),
+                storage_gate: Arc::new(Mutex::new(())),
+                _archive_lock: archive_lock,
             };
 
+            state.coordinator.request_maintenance(true);
             app.manage(state.clone());
             setup_tray(&app_handle)?;
 
@@ -5197,7 +5156,7 @@ pub fn run() {
                 });
             }
 
-            start_capture_worker(app_handle.clone(), state.clone());
+            start_capture_worker(app_handle.clone(), state.clone())?;
 
             Ok(())
         })
@@ -5208,6 +5167,7 @@ pub fn run() {
             update_settings,
             set_startup_on_boot,
             get_pause_state,
+            get_recording_state,
             set_pause_state,
             get_fullscreen_state,
             toggle_fullscreen,
@@ -5235,11 +5195,33 @@ pub fn run() {
             delete_day,
             delete_capture
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
+                let coordinator = app.state::<SharedState>().coordinator.clone();
+                if !coordinator.shutdown_complete() {
+                    api.prevent_exit();
+                    if coordinator.start_shutdown() {
+                        let app = app.clone();
+                        // Keep the GUI pumping until the capture worker has released native
+                        // resources. Native metadata/tray APIs may dispatch to the GUI thread.
+                        // This is a single lifecycle task, bounded by start_shutdown's CAS.
+                        tauri::async_runtime::spawn_blocking(move || {
+                            coordinator.shutdown();
+                            app.exit(code.unwrap_or(0));
+                        });
+                    }
+                }
+            }
+        });
 }
 
 mod capture;
+mod coordinator;
+mod privacy;
+mod storage;
+mod legacy;
 
 #[cfg(test)]
 mod tests;
