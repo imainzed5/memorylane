@@ -36,12 +36,9 @@ A tool that sees your screen has to be trustworthy, so MemoryLane works like thi
 
 MemoryLane runs on **Windows 10 and Windows 11**.
 
-There are no published downloads yet, so for now you build it from source. You'll need [Node.js](https://nodejs.org/), [Rust](https://rustup.rs/) 1.89 or newer, and the [Tauri prerequisites for Windows](https://tauri.app/start/prerequisites/).
-
-```powershell
-npm install
-npm run tauri dev
-```
+1. Download the latest `MemoryLane_x.y.z_x64-setup.exe` from the [**Releases page**](https://github.com/imainzed5/memorylane/releases/latest).
+2. Run the installer. Windows SmartScreen may warn about an unrecognized app; choose **More info → Run anyway**.
+3. Launch MemoryLane from the Start menu.
 
 A short setup guide opens on first launch. There you pick a theme and capture settings, then start recording.
 
@@ -72,7 +69,7 @@ MemoryLane deletes captures automatically based on your retention and storage li
 
 ## For developers
 
-MemoryLane is built with [Tauri 2](https://tauri.app/) (Rust) and React 19 + TypeScript + Vite.
+MemoryLane is built with [Tauri 2](https://tauri.app/) (Rust) and React 19 + TypeScript + Vite. To build from source you'll need [Node.js](https://nodejs.org/), [Rust](https://rustup.rs/) 1.89 or newer, and the [Tauri prerequisites for Windows](https://tauri.app/start/prerequisites/), then run `npm install` and `npm run tauri dev`.
 
 | Command | What it does |
 | --- | --- |
