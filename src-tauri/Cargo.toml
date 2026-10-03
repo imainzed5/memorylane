@@ -1,6 +1,6 @@
 [package]
 name = "memorylane"
-version = "1.0.0"
+version = "1.1.0"
 description = "MemoryLane local-first screenshot journal for Windows"
 authors = ["MemoryLane Contributors"]
 license = "MIT"

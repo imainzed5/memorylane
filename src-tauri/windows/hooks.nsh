@@ -9,6 +9,7 @@
     DetailPrint "Tesseract already installed. Skipping OCR component."
     Goto ml_ocr_done
   ${EndIf}
+  IfFileExists "$PROGRAMFILES64\Tesseract-OCR\tesseract.exe" ml_ocr_present 0
 
   IfSilent ml_skip_ocr
 
@@ -20,12 +21,19 @@
 
   ml_install_ocr:
     DetailPrint "Installing optional OCR component (Tesseract)..."
-    ExecWait '"$INSTDIR\resources\tesseract\tesseract-installer.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-' $2
-    ${If} $2 == 0
-      DetailPrint "OCR component installed successfully."
-    ${Else}
-      MessageBox MB_ICONEXCLAMATION|MB_OK "OCR component install failed (exit code $2). MemoryLane will still run, but OCR search will be unavailable until Tesseract is installed."
-    ${EndIf}
+    ; The Tesseract installer (NSIS, highestAvailable manifest) may need elevation,
+    ; which ExecWait cannot trigger, so launch through the shell and verify the result.
+    ExecShellWait "open" "$INSTDIR\resources\tesseract\tesseract-installer.exe" "/S"
+    IfFileExists "$PROGRAMFILES64\Tesseract-OCR\tesseract.exe" 0 ml_ocr_failed
+    DetailPrint "OCR component installed successfully."
+    Goto ml_ocr_done
+
+  ml_ocr_failed:
+    MessageBox MB_ICONEXCLAMATION|MB_OK "The OCR component was not installed. MemoryLane will still run, but text search will be unavailable until Tesseract is installed."
+    Goto ml_ocr_done
+
+  ml_ocr_present:
+    DetailPrint "Tesseract already installed. Skipping OCR component."
     Goto ml_ocr_done
 
   ml_missing_ocr_installer:
