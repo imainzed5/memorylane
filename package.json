@@ -1,7 +1,7 @@
 {
   "name": "memorylane-desktop",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "MemoryLane local-first screenshot journal for Windows",
   "author": "MemoryLane Contributors",
   "license": "MIT",
