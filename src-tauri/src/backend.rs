@@ -1308,7 +1308,7 @@ fn apply_startup_on_boot_setting(_app: &AppHandle, enabled: bool) -> Result<(), 
 
     if enabled {
         let command_value = format!("\"{}\"", executable_path.display());
-        let status = Command::new("reg")
+        let status = console_command("reg")
             .arg("add")
             .arg(run_key)
             .arg("/v")
@@ -1325,7 +1325,7 @@ fn apply_startup_on_boot_setting(_app: &AppHandle, enabled: bool) -> Result<(), 
             return Err("failed to enable startup-on-boot registry entry".to_string());
         }
     } else {
-        let _ = Command::new("reg")
+        let _ = console_command("reg")
             .arg("delete")
             .arg(run_key)
             .arg("/v")
@@ -1495,8 +1495,23 @@ fn tesseract_candidate_paths() -> Vec<PathBuf> {
     candidates
 }
 
+/// A `Command` for a console program that must not open a console window. Release builds
+/// use the GUI subsystem, so without CREATE_NO_WINDOW Windows flashes a terminal for every
+/// spawn (e.g. each Tesseract OCR run).
+fn console_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    #[allow(unused_mut)]
+    let mut command = Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    command
+}
+
 fn resolve_tesseract_executable() -> Option<PathBuf> {
-    let default_available = Command::new("tesseract")
+    let default_available = console_command("tesseract")
         .arg("--version")
         .status()
         .ok()
@@ -1512,7 +1527,7 @@ fn resolve_tesseract_executable() -> Option<PathBuf> {
             continue;
         }
 
-        let available = Command::new(&candidate)
+        let available = console_command(&candidate)
             .arg("--version")
             .status()
             .ok()
@@ -1570,7 +1585,7 @@ fn extract_ocr_text_from_image(image_path: &str) -> Result<String, String> {
             .to_string()
     })?;
 
-    let status = Command::new(&tesseract_executable)
+    let status = console_command(&tesseract_executable)
         .arg(image_path)
         .arg(&output_base)
         .arg("--dpi")
