@@ -2415,7 +2415,7 @@ fn capture_once_with(state: &SharedState, ticket: &coordinator::CaptureTicket, a
         capture::CaptureOutcome::Blank => return suppressed("Screen was blank."),
     };
     if !state.coordinator.lock().ticket_valid(ticket) { return suppressed("Recording or privacy settings changed during capture."); }
-    if before != snapshot()? { return suppressed("Desktop context changed during capture."); }
+    if privacy::context_changed(settings, &before, &snapshot()?) { return suppressed("Desktop context changed during capture."); }
     let now = Local::now();
     let day_key = now.format("%Y-%m-%d").to_string();
     let foreground = before.windows.iter().find(|window| window.handle == before.foreground);
@@ -2432,7 +2432,7 @@ fn capture_once_with(state: &SharedState, ticket: &coordinator::CaptureTicket, a
     let mut thumbnail_bytes = Vec::new();
     JpegEncoder::new_with_quality(&mut thumbnail_bytes, 68).encode_image(&full_image.thumbnail(360,202))
         .map_err(|e| format!("failed to encode thumbnail: {e}"))?;
-    if before != snapshot()? { return suppressed("Desktop context changed while encoding."); }
+    if privacy::context_changed(settings, &before, &snapshot()?) { return suppressed("Desktop context changed while encoding."); }
     let capture_id;
     let mut pending = storage::PendingCaptureFiles::new(state);
     {
@@ -2441,7 +2441,7 @@ fn capture_once_with(state: &SharedState, ticket: &coordinator::CaptureTicket, a
         let _storage = storage::gate(state);
         let core = state.coordinator.lock();
         if !core.ticket_valid(ticket) { return suppressed("Recording or privacy settings changed."); }
-        if before != snapshot()? { return suppressed("Desktop context changed before saving."); }
+        if privacy::context_changed(settings, &before, &snapshot()?) { return suppressed("Desktop context changed before saving."); }
         let day_dir = state.capture_dir.join(&day_key);
         validate_managed_path(&state.capture_dir, &day_dir)?;
         fs::create_dir_all(&day_dir).map_err(|e| e.to_string())?;
@@ -2453,7 +2453,7 @@ fn capture_once_with(state: &SharedState, ticket: &coordinator::CaptureTicket, a
         let thumbnail_path = day_dir.join(format!("{stem}_thumb.jpg"));
         pending.write(&image_path, &image_bytes)?;
         pending.write(&thumbnail_path, &thumbnail_bytes)?;
-        if before != snapshot()? { return suppressed("Desktop context changed before saving metadata."); }
+        if privacy::context_changed(settings, &before, &snapshot()?) { return suppressed("Desktop context changed before saving metadata."); }
         capture_id = with_connection(state, |conn| {
             let transaction = conn.unchecked_transaction().map_err(|e| e.to_string())?;
         transaction.execute(

@@ -76,7 +76,43 @@ fn desktop_or_secure_context_changes_cannot_persist_acquired_pixels() {
     }
 }
 
+#[test]
+fn cosmetic_desktop_churn_during_capture_still_saves() {
+    let (_temp, state) = build_test_state();
+    let ticket = state.coordinator.lock().next(Instant::now()).unwrap().ticket;
+    let mut inspections = 0;
+    let result = capture_once_with(&state, &ticket, None, || {
+        inspections += 1;
+        let mut desktop = fixture_desktop();
+        // Live-updating titles, moves and focus changes must not abort a capture.
+        desktop.windows[0].title = format!("secret {inspections}");
+        desktop.windows[0].rect.0 += inspections;
+        desktop.foreground = inspections as usize;
+        Ok(desktop)
+    }, fixture_frame).unwrap();
+    assert!(matches!(result, CaptureRunResult::Captured));
+    assert_eq!(fixture_capture_count(&state), 1);
+}
 
+#[test]
+fn title_turning_sensitive_during_capture_discards_pixels() {
+    let (_temp, state) = build_test_state();
+    {
+        let mut core = state.coordinator.lock();
+        let mut settings = core.settings.clone(); settings.excluded_window_keywords = vec!["bank".into()];
+        apply_recording_settings_locked(&state, &mut core, settings);
+    }
+    let ticket = state.coordinator.lock().next(Instant::now()).unwrap().ticket;
+    let mut inspections = 0;
+    let result = capture_once_with(&state, &ticket, None, || {
+        inspections += 1;
+        let mut desktop = fixture_desktop();
+        if inspections > 1 { desktop.windows[0].title = "My Bank".into(); }
+        Ok(desktop)
+    }, fixture_frame).unwrap();
+    assert!(matches!(result, CaptureRunResult::Suppressed(_)));
+    assert_eq!(fixture_capture_count(&state), 0);
+}
 
 
 #[test]

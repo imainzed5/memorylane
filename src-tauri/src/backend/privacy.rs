@@ -61,6 +61,33 @@ pub(super) fn evaluate(
     outcome
 }
 
+fn outcome_rank(outcome: Option<&CaptureSuppressedEventPayload>) -> u8 {
+    match outcome.map(|policy| policy.mode.as_str()) {
+        None => 0,
+        Some("pause") => 3,
+        Some("skip") => 2,
+        Some(_) => 1,
+    }
+}
+
+/// Whether the desktop drifted in a way that invalidates the decision made for `before`.
+/// Cosmetic churn (title text, window moves, z-order, focus) is fine as long as the policy
+/// re-evaluated against `after` is no stricter. New windows and secure-desktop switches are
+/// tracked through `epoch`, so a window that flashed in and out between the two inspections
+/// still counts.
+pub(super) fn context_changed(
+    settings: &Settings,
+    before: &PrivacySnapshot,
+    after: &PrivacySnapshot,
+) -> bool {
+    after.secure
+        || after.epoch != before.epoch
+        || after.monitor != before.monitor
+        || after.bounds != before.bounds
+        || outcome_rank(evaluate(settings, after).as_ref())
+            > outcome_rank(evaluate(settings, before).as_ref())
+}
+
 pub(super) fn suppressed(reason: &str) -> CaptureSuppressedEventPayload {
     CaptureSuppressedEventPayload {
         mode: "skip".into(),
@@ -191,42 +218,46 @@ mod native {
         if !TRACKER_READY.load(Ordering::Acquire) {
             return Err("Window privacy tracking is unavailable.".into());
         }
-        let epoch = WINDOW_EPOCH.load(Ordering::Acquire);
-        let (monitor, bounds) = primary()?;
-        let secure = crate::backend::capture::is_secure_desktop_active();
-        let foreground = unsafe { GetForegroundWindow() } as usize;
-        if secure {
-            return Ok(PrivacySnapshot {
-                monitor,
+        // A window appearing mid-enumeration makes the list unreliable; re-inspect a few times
+        // before giving up instead of failing the whole capture on the first collision.
+        for _ in 0..5 {
+            let epoch = WINDOW_EPOCH.load(Ordering::Acquire);
+            let (monitor, bounds) = primary()?;
+            let secure = crate::backend::capture::is_secure_desktop_active();
+            let foreground = unsafe { GetForegroundWindow() } as usize;
+            if secure {
+                return Ok(PrivacySnapshot {
+                    monitor,
+                    bounds,
+                    foreground,
+                    windows: vec![],
+                    secure,
+                    epoch,
+                });
+            }
+            let mut state = Enumeration {
                 bounds,
-                foreground,
-                windows: vec![],
-                secure,
-                epoch,
-            });
+                windows: Vec::new(),
+                failed: false,
+            };
+            if unsafe { EnumWindows(Some(enumerate), (&mut state as *mut Enumeration) as LPARAM) }
+                == 0
+                || state.failed
+            {
+                return Err("Unable to enumerate visible windows for privacy checks.".into());
+            }
+            if WINDOW_EPOCH.load(Ordering::Acquire) == epoch {
+                return Ok(PrivacySnapshot {
+                    monitor,
+                    bounds,
+                    foreground,
+                    windows: state.windows,
+                    secure,
+                    epoch,
+                });
+            }
         }
-        let mut state = Enumeration {
-            bounds,
-            windows: Vec::new(),
-            failed: false,
-        };
-        if unsafe { EnumWindows(Some(enumerate), (&mut state as *mut Enumeration) as LPARAM) } == 0
-            || state.failed
-        {
-            return Err("Unable to enumerate visible windows for privacy checks.".into());
-        }
-        if WINDOW_EPOCH.load(Ordering::Acquire) != epoch {
-            return Err("Visible windows changed during privacy inspection.".into());
-        }
-        // Keep z-order: a changed overlap/composition also invalidates acquisition.
-        Ok(PrivacySnapshot {
-            monitor,
-            bounds,
-            foreground,
-            windows: state.windows,
-            secure,
-            epoch,
-        })
+        Err("Visible windows kept changing during privacy inspection.".into())
     }
 
     unsafe extern "system" fn changed(
@@ -238,9 +269,14 @@ mod native {
         _: u32,
         _: u32,
     ) {
-        if event < EVENT_OBJECT_CREATE || object == OBJID_WINDOW {
+        // Only events that can put a not-yet-inspected window on screen bump the epoch. Title,
+        // location, focus and z-order changes are re-checked by `context_changed` instead;
+        // counting them made every capture fail on desktops with live-updating titles.
+        if event == EVENT_SYSTEM_DESKTOPSWITCH || object == OBJID_WINDOW {
             let relevant = if hwnd.is_null() {
                 true
+            } else if event == EVENT_OBJECT_SHOW && GetAncestor(hwnd, GA_ROOT) != hwnd {
+                false
             } else {
                 let mut rect: RECT = std::mem::zeroed();
                 GetWindowRect(hwnd, &mut rect) == 0
@@ -269,7 +305,7 @@ mod native {
                     let mut message: MSG = std::mem::zeroed();
                     PeekMessageW(&mut message, std::ptr::null_mut(), 0, 0, PM_NOREMOVE);
                     let system = SetWinEventHook(
-                        EVENT_SYSTEM_FOREGROUND,
+                        EVENT_SYSTEM_DESKTOPSWITCH,
                         EVENT_SYSTEM_DESKTOPSWITCH,
                         std::ptr::null_mut(),
                         Some(changed),
@@ -278,8 +314,8 @@ mod native {
                         WINEVENT_OUTOFCONTEXT,
                     );
                     let objects = SetWinEventHook(
-                        EVENT_OBJECT_CREATE,
-                        EVENT_OBJECT_NAMECHANGE,
+                        EVENT_OBJECT_SHOW,
+                        EVENT_OBJECT_SHOW,
                         std::ptr::null_mut(),
                         Some(changed),
                         0,
